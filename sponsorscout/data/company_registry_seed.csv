@@ -1,0 +1,112 @@
+name,country,ats_type,careers_url,ats_board_token,industry,sponsorship_history,english_friendly,remote_score
+Shopify,Canada,greenhouse,https://boards.greenhouse.io/shopify,shopify,E-Commerce,85,95,80
+Pleo,Denmark,personio,https://pleo.jobs.personio.com,pleo,Fintech,80,90,70
+Bolt,Estonia,greenhouse,https://boards.greenhouse.io/bolt,bolt,,80,85,60
+Pipedrive,Estonia,greenhouse,https://boards.greenhouse.io/pipedrive,pipedrive,,80,85,60
+Veriff,Estonia,greenhouse,https://boards.greenhouse.io/veriff,veriff,,80,85,60
+Spendesk,France,personio,https://spendesk.jobs.personio.com,spendesk,Fintech,75,85,65
+Audible,Germany,greenhouse,https://boards.greenhouse.io/audible,audible,,80,85,60
+AutoScout24,Germany,lever,https://jobs.lever.co/autoscout24,autoscout24,,80,85,60
+Autodesk,Germany,lever,https://jobs.lever.co/autodesk,autodesk,,80,85,60
+Babbel,Germany,greenhouse,https://boards.greenhouse.io/babbel,babbel,,80,85,60
+Cal.com,Germany,ashby,https://jobs.ashbyhq.com/calcom,calcom,SaaS,75,95,100
+Celonis,Germany,greenhouse,https://boards.greenhouse.io/celonis,celonis,Enterprise,80,85,60
+Choco,Germany,greenhouse,https://boards.greenhouse.io/choco,choco,,80,85,60
+Contentful,Germany,greenhouse,https://boards.greenhouse.io/contentful,contentful,SaaS,85,90,75
+Crealytics,Germany,greenhouse,https://boards.greenhouse.io/crealytics,crealytics,,80,85,60
+Delivery Hero,Germany,greenhouse,https://boards.greenhouse.io/deliveryhero,deliveryhero,,80,85,60
+Flix,Germany,greenhouse,https://boards.greenhouse.io/flixmobility,flixmobility,,80,85,60
+Forto,Germany,personio,https://forto.jobs.personio.com,forto,Logistics,75,80,55
+HelloFresh,Germany,greenhouse,https://boards.greenhouse.io/hellofresh,hellofresh,Food Tech,80,85,40
+HelloFresh,Germany,greenhouse,https://boards.greenhouse.io/hellofreshglobal,hellofreshglobal,,80,85,60
+Moss,Germany,personio,https://moss.jobs.personio.de,moss,Fintech,80,85,60
+N26,Germany,greenhouse,https://boards.greenhouse.io/n26,n26,Fintech,85,90,55
+Personio,Germany,greenhouse,https://boards.greenhouse.io/personio,personio,HR Tech,80,90,65
+Pitch,Germany,lever,https://jobs.lever.co/pitchdeck,pitchdeck,SaaS,80,90,85
+SAP,Germany,workday,https://sap.wd3.myworkdayjobs.com/en-US/SAP,SAP,Enterprise,80,80,55
+SAP,Germany,workday,https://sap.wd3.myworkdayjobs.com/SAP,SAP,,80,85,60
+Siemens,Germany,workday,https://siemens.wd3.myworkdayjobs.com/en-US/Siemens_Careers,Siemens_Careers,Engineering,80,75,50
+SmartRecruiters,Germany,smartrecruiters,https://jobs.smartrecruiters.com/SmartRecruiters,SmartRecruiters,HR Tech,75,90,65
+SumUp,Germany,greenhouse,https://boards.greenhouse.io/sumup,sumup,Fintech,85,90,60
+Zalando,Germany,greenhouse,https://boards.greenhouse.io/zalando,zalando,E-Commerce,80,80,50
+Dropbox,Ireland,greenhouse,https://boards.greenhouse.io/dropbox,dropbox,,80,85,60
+PayPal,Ireland,workday,https://paypal.wd1.myworkdayjobs.com/jobs,jobs,,80,85,60
+Workday,Ireland,lever,https://jobs.lever.co/workday,workday,,80,85,60
+Zendesk,Ireland,greenhouse,https://boards.greenhouse.io/zendesk,zendesk,,80,85,60
+ABN AMRO,Netherlands,workday,https://abnamro.wd3.myworkdayjobs.com/en-US/ABN_AMRO_vacatures,ABN_AMRO_vacatures,Banking,75,75,45
+ABN AMRO,Netherlands,workday,https://abnamro.wd3.myworkdayjobs.com/ABN_AMRO_vacatures,ABN_AMRO_vacatures,,80,85,60
+ASML,Netherlands,workday,https://asml.wd3.myworkdayjobs.com/ASML,ASML,,80,85,60
+Adyen,Netherlands,greenhouse,https://boards.greenhouse.io/adyen,adyen,Fintech,90,95,60
+Backbase,Netherlands,greenhouse,https://boards.greenhouse.io/backbase,backbase,,80,85,60
+Bol.com,Netherlands,greenhouse,https://boards.greenhouse.io/bol,bol,,80,85,60
+Booking.com,Netherlands,greenhouse,https://boards.greenhouse.io/bookingcom,bookingcom,Travel,85,90,40
+Brevo,Netherlands,greenhouse,https://boards.greenhouse.io/brevo,brevo,,80,85,60
+Bunq,Netherlands,greenhouse,https://boards.greenhouse.io/bunq,bunq,,80,85,60
+Bynder,Netherlands,recruitee,https://bynder.recruitee.com,,SaaS,75,90,70
+Catawiki,Netherlands,recruitee,https://catawiki.recruitee.com,,E-Commerce,75,85,60
+Freeletics,Netherlands,lever,https://jobs.lever.co/freeletics,freeletics,,80,85,60
+ING,Netherlands,workday,https://ing.wd3.myworkdayjobs.com/en-US/ING,ING,Banking,80,80,45
+ING,Netherlands,workday,https://ing.wd3.myworkdayjobs.com/ING,ING,,80,85,60
+InnoGames,Netherlands,greenhouse,https://boards.greenhouse.io/innogames,innogames,,80,85,60
+KPN,Netherlands,official_careers,https://jobs.kpn.com,,,80,85,60
+Lemon Markets,Netherlands,ashby,https://jobs.ashbyhq.com/lemon-markets,lemon-markets,,80,85,60
+Lightspeed,Netherlands,greenhouse,https://boards.greenhouse.io/lightspeedhq,lightspeedhq,,80,85,60
+Mendix,Netherlands,greenhouse,https://boards.greenhouse.io/mendix,mendix,,80,85,60
+MessageBird,Netherlands,lever,https://jobs.lever.co/messagebird,messagebird,SaaS,80,90,70
+Miro,Netherlands,lever,https://jobs.lever.co/miro,miro,SaaS,85,95,75
+Mollie,Netherlands,greenhouse,https://boards.greenhouse.io/mollie,mollie,,80,85,60
+NXP Semiconductors,Netherlands,workday,https://nxp.wd3.myworkdayjobs.com/careers,careers,,80,85,60
+Nexthink,Netherlands,ashby,https://jobs.ashbyhq.com/nexthink,nexthink,,80,85,60
+Optiver,Netherlands,greenhouse,https://boards.greenhouse.io/optiver,optiver,,80,85,60
+Organon,Netherlands,workday,https://organon.wd3.myworkdayjobs.com/organon_careers,organon_careers,,80,85,60
+Philips,Netherlands,workday,https://philips.wd3.myworkdayjobs.com/en-US/jobs,jobs,HealthTech,80,80,50
+Philips,Netherlands,workday,https://philips.wd3.myworkdayjobs.com/jobs,jobs,,80,85,60
+Picnic,Netherlands,official_careers,https://jobs.picnic.app/en,,,80,85,60
+Rabobank,Netherlands,official_careers,https://rabobank.jobs/en,,,80,85,60
+Raisin,Netherlands,greenhouse,https://boards.greenhouse.io/raisin,raisin,,80,85,60
+Recruitee,Netherlands,recruitee,https://careers.recruitee.com,,HR Tech,75,90,70
+Springbok Agency,Netherlands,recruitee,https://springbokagency.recruitee.com,,Agency,65,85,70
+TomTom,Netherlands,greenhouse,https://boards.greenhouse.io/tomtom,tomtom,,80,85,60
+WeTransfer,Netherlands,recruitee,https://wetransfer.recruitee.com,,SaaS,75,90,70
+Wolt,Netherlands,greenhouse,https://boards.greenhouse.io/wolt,wolt,,80,85,60
+Doist,Portugal,lever,https://jobs.lever.co/doist,doist,Productivity,75,95,100
+Remote.com,Portugal,lever,https://jobs.lever.co/remote,remote,HR Tech,80,95,100
+Rows,Portugal,ashby,https://jobs.ashbyhq.com/rows,rows,SaaS,75,90,80
+Factorial,Spain,personio,https://factorial.jobs.personio.com,factorial,HR Tech,75,85,65
+Glovo,Spain,greenhouse,https://boards.greenhouse.io/glovoapp,glovoapp,Delivery,75,80,40
+Jobandtalent,Spain,smartrecruiters,https://jobs.smartrecruiters.com/Jobandtalent,Jobandtalent,HR Tech,70,80,55
+Typeform,Spain,greenhouse,https://boards.greenhouse.io/typeform,typeform,SaaS,85,95,80
+Detectify,Sweden,teamtailor,https://detectify.teamtailor.com,,Cybersecurity,75,90,70
+King,Sweden,greenhouse,https://boards.greenhouse.io/king,king,Gaming,80,90,60
+Klarna,Sweden,greenhouse,https://boards.greenhouse.io/klarna,klarna,Fintech,85,90,65
+Mentimeter,Sweden,teamtailor,https://mentimeter.teamtailor.com,,EdTech,70,90,65
+Planhat,Sweden,teamtailor,https://planhat.teamtailor.com,,SaaS,70,90,70
+Quinyx,Sweden,teamtailor,https://quinyx.teamtailor.com,,Workforce,70,85,60
+Spotify,Sweden,greenhouse,https://boards.greenhouse.io/spotify,spotify,Media,90,95,75
+Teamtailor,Sweden,teamtailor,https://careers.teamtailor.com,,HR Tech,75,90,65
+Voi Technology,Sweden,greenhouse,https://boards.greenhouse.io/voitechnology,voitechnology,Mobility,75,85,50
+Deliveroo,United Kingdom,greenhouse,https://boards.greenhouse.io/deliveroo,deliveroo,Food Tech,80,90,55
+Improbable,United Kingdom,greenhouse,https://boards.greenhouse.io/improbable,improbable,Gaming/AI,80,90,65
+Incident.io,United Kingdom,ashby,https://jobs.ashbyhq.com/incident.io,incident.io,SaaS,80,95,85
+Luno,United Kingdom,greenhouse,https://boards.greenhouse.io/luno,luno,Crypto,80,90,70
+Monzo,United Kingdom,greenhouse,https://boards.greenhouse.io/monzo,monzo,Fintech,90,95,70
+Ocado Technology,United Kingdom,greenhouse,https://boards.greenhouse.io/ocadogroup,ocadogroup,,80,85,60
+Revolut,United Kingdom,greenhouse,https://boards.greenhouse.io/revolut,revolut,Fintech,85,90,60
+Skyscanner,United Kingdom,lever,https://jobs.lever.co/skyscanner,skyscanner,,80,85,60
+Airbyte,United States,ashby,https://jobs.ashbyhq.com/airbyte,airbyte,Data,80,95,80
+BambooHR,United States,bamboohr,https://bamboohr.bamboohr.com/jobs,,HR Tech,70,90,70
+Databricks,United States,lever,https://jobs.lever.co/databricks,databricks,Data/AI,85,95,75
+Dbt Labs,United States,ashby,https://jobs.ashbyhq.com/dbtlabs,dbtlabs,Data,80,95,80
+Elastic,United States,lever,https://jobs.lever.co/elastic,elastic,Search/Cloud,85,95,85
+Figma,United States,greenhouse,https://boards.greenhouse.io/figma,figma,Design,80,95,70
+Linear,United States,ashby,https://jobs.ashbyhq.com/linear,linear,Developer Tools,80,95,85
+Loom,United States,ashby,https://jobs.ashbyhq.com/loom,loom,SaaS,80,95,80
+Mapbox,United States,lever,https://jobs.lever.co/mapbox,mapbox,GeoTech,80,90,75
+Mixpanel,United States,lever,https://jobs.lever.co/mixpanel,mixpanel,Analytics,80,90,80
+Netlify,United States,lever,https://jobs.lever.co/netlify,netlify,Developer Tools,80,95,90
+Notion,United States,greenhouse,https://boards.greenhouse.io/notion,notion,Productivity,75,95,80
+Retool,United States,ashby,https://jobs.ashbyhq.com/retool,retool,Developer Tools,80,95,75
+Sentry,United States,lever,https://jobs.lever.co/sentry,sentry,Developer Tools,80,95,85
+Stripe,United States,greenhouse,https://boards.greenhouse.io/stripe,stripe,Fintech,90,95,70
+Twilio,United States,greenhouse,https://boards.greenhouse.io/twilio,twilio,SaaS,80,90,75
+Vercel,United States,lever,https://jobs.lever.co/vercel,vercel,Developer Tools,85,95,90

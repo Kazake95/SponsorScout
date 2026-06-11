@@ -1,0 +1,119 @@
+name,country,ats_type,careers_url,ats_board_token,industry,sponsorship_history,english_friendly,remote_score
+# ── Germany / DACH ──────────────────────────────────────────────────────────,,,,,,,,
+Cargo.one,Germany,official_careers,https://www.cargo.one/career,,Logistics Tech,75,80,55
+Crealytics,Germany,official_careers,https://crealytics.com/careers,,Retail Media,75,80,55
+Caeli Wind,Germany,official_careers,https://www.caeli-wind.de/en/careers,,CleanTech,70,75,40
+,,,,,,,,
+# ── Ireland ─────────────────────────────────────────────────────────────────,,,,,,,,
+HubSpot,Ireland,greenhouse,https://boards.greenhouse.io/hubspot,hubspot,SaaS,90,95,70
+,,,,,,,,
+# ── United Kingdom ──────────────────────────────────────────────────────────,,,,,,,,
+Wise,United Kingdom,lever,https://wise.jobs/,wise,Fintech,85,95,80
+Anvil,United Kingdom,official_careers,https://anvils.work/jobs,,Legal Tech,70,85,60
+Recraft,United Kingdom,ashby,https://jobs.ashbyhq.com/recraft,recraft,AI,70,90,75
+Rebellion,United Kingdom,official_careers,https://careers.rebellion.com/,,Gaming,75,85,40
+Octagon Group,United Kingdom,official_careers,https://vacancies.octagongroup.co.uk/,,Recruitment,70,90,50
+,,,,,,,,
+# ── Estonia ────────────────────────────────────────────────────────────────,,,,,,,,
+Wise,Estonia,lever,https://wise.jobs/,wise,Fintech,85,95,80
+,,,,,,,,
+# ── Netherlands (additions) ────────────────────────────────────────────────,,,,,,,,
+GO Sharing,Netherlands,official_careers,https://go-sharing.com,,Mobility,75,80,40
+ParkBee,Netherlands,official_careers,https://careers.parkbee.com,,PropTech,75,85,45
+Insify,Netherlands,official_careers,https://www.insify.com/careers,,InsurTech,75,85,70
+GreenFlux,Netherlands,recruitee,https://greenflux.recruitee.com,,EV Charging,75,85,45
+Inverid (ReadID),Netherlands,official_careers,https://inverid.com/careers,,Identity Tech,75,90,40
+Doctolib,Netherlands,official_careers,https://about.doctolib.com/careers,,HealthTech,80,85,50
+Lemon Markets,Netherlands,ashby,https://jobs.ashbyhq.com/lemon-markets,lemon-markets,Fintech,80,90,70
+Mango IT Recruitment,Netherlands,recruitee,https://mango-it.recruitee.com,,HR Tech,70,90,80
+3D Hubs / Protolabs,Netherlands,official_careers,https://www.protolabs.com/about-us/careers,,Manufacturing,75,85,35
+Organon,Netherlands,workday,https://organon.wd3.myworkdayjobs.com/organon_careers,organon_careers,Healthcare,80,85,40
+MSD Netherlands,Netherlands,workday,https://jobs.msd.com,jobs,Pharma,80,90,40
+Virtuagym,Netherlands,official_careers,https://virtuagym.com/company/careers,,Fitness SaaS,75,85,75
+Exact,Netherlands,official_careers,https://www.exact.com/nl/werken-bij,,ERP,75,80,30
+Ohpen,Netherlands,official_careers,https://www.ohpen.com/careers,,Banking SaaS,75,85,50
+,,,,,,,,
+# ── Other European (new from xlsx) ──────────────────────────────────────────,,,,,,,,
+Scorewarrior,Cyprus,official_careers,https://scorewarrior.com/careers,,Gaming,75,85,70
+MetaQuotes,Cyprus,official_careers,https://www.metaquotes.net/en/company/vacancies,,Fintech,75,85,55
+Exness,Cyprus,official_careers,https://www.exness-careers.com/jobs/,,Fintech,75,85,60
+ClearVue,Germany,official_careers,https://clearvue.business/careers/,,BI Software,70,80,55
+Catawiki (Berlin),Germany,recruitee,https://catawiki.recruitee.com,,E-Commerce,75,85,60
+Kaufland e-com,Germany,official_careers,https://kaufland-ecommerce.com/karriere/jobs/,,E-Commerce,75,80,40
+Freeletics (Berlin),Germany,official_careers,https://www.freeletics.com/en/corporate/jobs/,,Fitness,75,90,85
+lemon.markets (Berlin),Germany,ashby,https://jobs.ashbyhq.com/lemon-markets,lemon-markets,Fintech,80,90,70
+About You,Germany,official_careers,http://corporate.aboutyou.de/en/our-jobs,,Fashion,75,85,50
+Buena,Germany,official_careers,https://buena.com/careers,,PropTech,70,80,55
+Ecosia,Germany,official_careers,https://explore.ecosia.org/jobs,,Search,75,90,55
+Bonial,Germany,official_careers,https://www.bonial.com/en/,,Retail Media,75,80,40
+reisetopia,Germany,official_careers,https://reisetopia.de/jobs/,,Travel,70,85,75
+adjoe,Germany,official_careers,https://adjoe.io/careers/open-positions/,,AdTech,75,85,55
+KONUX,Germany,official_careers,https://www.konux.com/careers/,,Industrial IoT,75,85,40
+limehome,Germany,official_careers,https://career.limehome.de/careers/limehome-b48z,,Hospitality,70,80,40
+Highsnobiety,Germany,official_careers,https://company.highsnobiety.com/jobs,,Fashion Media,70,85,60
+QuantumDiam,Germany,official_careers,https://www.qd-st.com/careers,,Quantum Tech,70,80,30
+NavVis,Germany,official_careers,https://www.navvis.com/company/careers/,,3D Mapping,75,85,40
+Henzo,Germany,official_careers,https://www.heyhenzo.com/de/karriere,,Automation,70,80,55
+Anymind Group,Germany,official_careers,https://anymindgroup.com/career/,,AdTech,70,80,55
+Nexthink (Germany),Germany,official_careers,https://nexthink.com/company/careers/jobs,,Digital Workplace,75,85,55
+Appodeal,Germany,official_careers,https://appodeal.com/career/,,AdTech,70,80,50
+,,,,,,,,
+# ── Agences / Recruitment agencies (info-only, scan via their portals) ──,,,,,,,
+Hays Germany,Germany,official_careers,https://www.hays.de/,,Recruitment,70,75,30
+Robert Walters Germany,Germany,official_careers,https://www.robertwalters.de/en/,,Recruitment,70,80,30
+Michael Page Germany,Germany,official_careers,https://www.michaelpage.de/,,Recruitment,70,80,30
+Harnham Germany,Germany,official_careers,https://harnham.com/,,Recruitment,70,80,40
+Austin Fraser,Germany,official_careers,https://www.austinfraser.com/de/,,Recruitment,70,80,40
+Talentor Germany,Germany,official_careers,https://www.talentor.com/,,Recruitment,70,80,30
+Avomind,Germany,official_careers,https://avomind.de/,,Recruitment,70,80,30
+Approach People,Germany,official_careers,https://www.approachpeople.com/germany,,Recruitment,70,80,30
+Kelly Services Germany,Germany,official_careers,https://www.kellyservices.de/,,Recruitment,70,75,25
+DevsData,Germany,official_careers,https://devsdata.com/,,Recruitment,70,80,30
+Undutchables,Netherlands,official_careers,https://undutchables.nl/,,Recruitment,70,85,40
+Darwin Recruitment,Netherlands,official_careers,https://www.darwinrecruitment.com/,,Recruitment,70,85,40
+Huxley Netherlands,Netherlands,official_careers,https://www.huxley.com/en-nl/,,Recruitment,70,85,30
+Michael Page Netherlands,Netherlands,official_careers,https://www.michaelpage.nl/,,Recruitment,70,85,30
+Robert Walters Netherlands,Netherlands,official_careers,https://www.robertwalters.nl/,,Recruitment,70,85,30
+Morgan McKinley,Ireland,official_careers,https://www.morganmckinley.com/ie,,Recruitment,70,80,30
+Sigmar Recruitment,Ireland,official_careers,https://www.sigmarrecruitment.com/,,Recruitment,70,80,30
+Reperio Human Capital,Ireland,official_careers,https://www.reperiohumancapital.com/,,Recruitment,70,80,30
+Robert Walters Ireland,Ireland,official_careers,https://www.robertwalters.ie/,,Recruitment,70,80,30
+Harnham UK,United Kingdom,official_careers,https://www.harnham.com/,,Recruitment,70,85,30
+Understanding Recruitment,United Kingdom,official_careers,https://www.understandingrecruitment.com/,,Recruitment,70,85,30
+La Fosse,United Kingdom,official_careers,https://www.lafosse.com/,,Recruitment,70,85,35
+Michael Page UK,United Kingdom,official_careers,https://www.michaelpage.co.uk/,,Recruitment,70,85,30
+Nigel Frank,United Kingdom,official_careers,https://www.nigelfrank.com/,,Recruitment,70,85,30
+,,,,,,,,
+# ── Italy (Entry-level to Bachelor suitable jobs) ─────────────────────────────,,,,,,,,
+Esselunga,Italy,custom,https://www.esselunga.it/lavora-con-noi,esselunga,Retail/Supermarket,15,60,65
+Coop Italia,Italy,custom,https://www.coop.it/lavora-con-noi,coop,Retail/Supermarket,15,60,70
+Conad,Italy,custom,https://www.conad.it/lavora-con-noi,conad,Retail/Supermarket,15,60,65
+Lidl Italia,Italy,custom,https://www.lidl.it/lavora-con-noi,lidl,Retail/Supermarket,15,60,65
+Eurospin,Italy,custom,https://www.eurospin.eu/lavora-con-noi,eurospin,Retail/Supermarket,15,55,60
+Selex,Italy,custom,https://www.selex.it/lavora-con-noi,selex,Retail/Supermarket,15,60,60
+Carrefour Italia,Italy,custom,https://www.carrefour.it/lavora-con-noi,carrefour,Retail/Supermarket,15,60,65
+Pam Panorama,Italy,custom,https://www.pampanorama.it/lavora-con-noi,pam,Retail/Supermarket,15,60,60
+Poste Italiane,Italy,custom,https://carriere.posteitaliane.it/,posteitaliane,Logistics/Services,20,60,70
+FS Italiane / Trenitalia,Italy,custom,https://www.fsitaliane.it/,fsitaliane,Transport/Logistics,20,60,55
+Autogrill,Italy,custom,https://www.autogrill.com/en/careers,autogrill,Hospitality/Food Service,20,65,60
+Barilla Group,Italy,custom,https://www.barillagroup.com/en/careers/,barilla,Food/Manufacturing,30,75,55
+Ferrero,Italy,custom,https://www.ferrerocareers.com/,ferrero,Food/Manufacturing,25,70,50
+Lavazza,Italy,custom,https://jobs.lavazza.com/,lavazza,Food/Manufacturing,25,70,55
+Prysmian Group,Italy,custom,https://www.prysmiangroup.com/en/careers,prysmian,Manufacturing,35,70,60
+Eni,Italy,custom,https://jobs.eni.com/,eni,Energy,30,70,60
+Enel,Italy,custom,https://jobs.enel.com/,enel,Energy/Utilities,40,75,65
+Stellantis,Italy,custom,https://careers.stellantis.com/,stellantis,Automotive/Manufacturing,40,70,55
+Intesa Sanpaolo,Italy,custom,https://jobs.intesasanpaolo.com/,intesasanpaolo,Banking/Finance,20,65,60
+UniCredit,Italy,custom,https://careers.unicredit.eu/,unicredit,Banking/Finance,25,70,60
+TIM,Italy,custom,https://www.gruppotim.it/en/careers,gruppotim,Telecom,25,70,65
+Generali,Italy,custom,https://www.generali.com/careers,generali,Insurance,20,70,60
+Leonardo,Italy,workday,https://leonardocompany.wd3.myworkdayjobs.com/LeonardoCareerSite,leonardo,Aerospace/Defense,20,65,50
+Luxottica,Italy,custom,https://www.essilorluxottica.com/en/careers/,essilorluxottica,Fashion/Retail,35,75,55
+Prada Group,Italy,custom,https://jobs.pradagroup.com/,prada,Fashion/Luxury,30,80,50
+Angelini Pharma,Italy,custom,https://www.angelinipharma.com/careers,angelini,Pharma/Healthcare,25,70,50
+SNAM,Italy,custom,https://www.snam.it/en/careers,snam,Energy/Infrastructure,20,65,50
+Terna,Italy,custom,https://www.terna.it/en/careers,terna,Energy/Infrastructure,20,65,55
+Ikea Italia,Italy,custom,https://www.ikea.com/it/it/career/,ikea,Retail/Furniture,20,70,70
+McDonald's Italia,Italy,custom,https://www.mcdonalds.it/lavora-con-noi,mcdonalds,Hospitality/Fast Food,15,60,60
+Amazon Italia,Italy,custom,https://www.amazon.jobs/it/,amazon,Logistics/E-commerce,25,75,75
+Decathlon Italia,Italy,custom,https://www.decathlon.it/careers,decathlon,Retail/Sports,20,70,65

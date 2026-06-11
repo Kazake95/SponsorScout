@@ -1,0 +1,6 @@
+{
+  "titles": ["Data Analyst", "BI Analyst", "Business Intelligence Analyst", "Power BI Developer", "Analytics Engineer", "Fabric Engineer", "Reporting Analyst", "Data Engineer"],
+  "skills": ["SQL", "Power BI", "Microsoft Fabric", "Python", "Databricks", "Spark", "Excel"],
+  "countries": ["Ireland", "Netherlands", "Germany", "Belgium", "Luxembourg", "Austria", "Sweden", "Denmark", "Finland", "Estonia", "Poland", "Czech Republic", "Portugal", "Spain", "Lithuania", "Latvia"],
+  "sponsorship_required": true
+}
