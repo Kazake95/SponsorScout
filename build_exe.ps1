@@ -15,7 +15,8 @@ function Get-Version {
 $AppName    = 'SponsorScout'
 $Version    = Get-Version
 $DistDir    = Join-Path $Root 'dist'
-$ExePath    = Join-Path $DistDir "$AppName.exe"
+$BuildDir   = Join-Path $DistDir $AppName   # PyInstaller --onedir output folder
+$ExePath    = Join-Path $BuildDir "$AppName.exe"
 
 # Detect python launcher
 if (Get-Command py -ErrorAction SilentlyContinue) {
@@ -47,7 +48,7 @@ if (Test-Path $DistDir) {
     --clean `
     --noconfirm `
     --windowed `
-    --onefile `
+    --onedir `
     --name $AppName `
     --icon sponsorscout/data/sponsorscout.ico `
     --collect-data sponsorscout `
@@ -58,6 +59,14 @@ if (-not (Test-Path $ExePath)) {
     throw "PyInstaller did not produce $ExePath"
 }
 Write-Host "Built $ExePath (version $Version)" -ForegroundColor Green
+
+# Inno Setup needs the folder as a single unit for install/uninstall
+$InstallerSrcDir = Join-Path $DistDir "$AppName-InstallerFiles"
+if (Test-Path $InstallerSrcDir) {
+    Remove-Item -Recurse -Force $InstallerSrcDir
+}
+Copy-Item -Recurse -Path $BuildDir -Destination $InstallerSrcDir
+Copy-Item -Path (Join-Path $Root 'sponsorscout\data\sponsorscout.ico') -Destination $InstallerSrcDir -Force
 
 # Step 4: Build Inno Setup installer if ISCC.exe is available
 $Iscc = $null

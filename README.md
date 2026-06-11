@@ -284,9 +284,11 @@ Developer expansion details are in [docs/backend_expansion.md](docs/backend_expa
 ## Data stays local
 
 - Everything mutable is stored in your per-user SponsorScout data directory:
-  `~/.sponsorscout` by default, including `sponsorscout.db`
+  - **Linux / macOS:** `~/.sponsorscout` by default
+  - **Windows:** `%APPDATA%\SponsorScout` by default
+  - Includes `sponsorscout.db` (SQLite, WAL mode)
 - No telemetry, no accounts, no cloud sync
-- Delete `~/.sponsorscout` to reset completely, or set
+- Delete the data directory to reset completely, or set
   `SPONSORSCOUT_DATA_DIR` / `SPONSORSCOUT_DB_PATH` for a custom location
 
 ---
@@ -303,15 +305,16 @@ Expected: **80 passed**.
 
 ## Windows installation
 
-Windows users get a **single self-contained `SponsorScout.exe`** built with PyInstaller `--onefile`. No installer wizard, no admin rights needed, no Python install required on the target machine.
+Windows users get a **proper setup wizard** built with Inno Setup. The installer requires admin rights, places the app into `Program Files`, creates Start Menu / Desktop shortcuts, and manages all user data in `%APPDATA%\SponsorScout`.
 
-### Build the .exe (developer side, on a Windows machine)
+### Build the installer (developer side, on a Windows machine)
 
 Prerequisites on the build machine:
 
 - **Windows 10/11** (64-bit)
 - **Python 3.10+** from [python.org](https://www.python.org/downloads/windows/) (tick **"Add python.exe to PATH"** during install)
 - **PowerShell 5+** (already installed on every modern Windows)
+- **Inno Setup 6+** from [jrsoftware.org](https://jrsoftware.org/isdl.php) (add `ISCC.exe` to PATH, or the script will auto-detect it)
 
 In the project root, open PowerShell and run:
 
@@ -324,53 +327,51 @@ The script will:
 1. Upgrade `pip`
 2. Install `requirements.txt` + `pyinstaller`
 3. Run the test suite (skips on failure)
-4. Run `pyinstaller --onefile --windowed --icon sponsorscout/data/sponsorscout.ico …`
-5. Output the binary to `dist\SponsorScout.exe`
+4. Run `pyinstaller --onedir --windowed --icon sponsorscout/data/sponsorscout.ico …`
+5. Copy the built directory and assets to `dist\SponsorScout-InstallerFiles\`
+6. Compile `installer.iss` with Inno Setup → `dist\sponsorscout-<version>-setup.exe`
 
-The .exe is **fully self-contained** — all Python, all data files (CSV, JSON, icons), all ATS connector code is bundled inside. Typical size: ~30 MB.
+The resulting `sponsorscout-<version>-setup.exe` is the only artifact you need to distribute.
 
-### Install the .exe (end user side)
+### Install (end user side)
 
-1. Copy `dist\SponsorScout.exe` to any folder you like (e.g. `C:\Program Files\SponsorScout\` or just your Desktop).
-2. Double-click it. The main window opens.
+1. Download `sponsorscout-<version>-setup.exe`.
+2. Double-click it. The wizard opens.
+3. Accept the license, choose the install location (default: `C:\Program Files\SponsorScout`), and finish.
+4. The app launches automatically after installation.
 
-No additional files needed. The SQLite database is created in the per-user SponsorScout data directory on first run, so the app does not write into Program Files or a random launch folder.
+The installer automatically:
+- Creates the `%APPDATA%\SponsorScout` user data directory
+- Adds Start Menu and optional Desktop shortcuts
+- Registers the app in "Apps & Features" for clean uninstallation
 
-#### Optional: pin to Start Menu / Taskbar
+### Uninstall (completely remove everything)
 
-1. Right-click `SponsorScout.exe` → **Create shortcut**
-2. Right-click the shortcut → **Pin to Start** (or **Pin to taskbar**)
-3. (Optional) Right-click → **Properties** → **Change Icon…** → pick `sponsorscout.ico` from the source tree for a custom icon
+1. Open **Settings → Apps → Apps & features** (or Control Panel → Programs).
+2. Find **SponsorScout** and click **Uninstall**.
+3. The wizard removes:
+   - Program Files directory (`C:\Program Files\SponsorScout`)
+   - Start Menu and Desktop shortcuts
+   - Windows Registry entries (Add/Remove Programs)
+   - **All user data** in `%APPDATA%\SponsorScout` (SQLite DB, profiles, logs, etc.)
 
-#### Optional: add to PATH so you can launch from any terminal
-
-```powershell
-$env:Path += ";C:\Program Files\SponsorScout"
-# Or permanently:
-[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Program Files\SponsorScout", "User")
-```
-
-Then from any PowerShell / cmd window:
-
-```powershell
-SponsorScout.exe
-```
+> ⚠️ Uninstalling **removes all local data permanently**. Back up anything you need first.
 
 ### Headless / CI builds
 
-`build_exe.ps1` works on any Windows host with Python 3.10+. For fully unattended CI builds:
+`build_exe.ps1` works on any Windows host with Python 3.10+ and Inno Setup. For fully unattended builds:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build_exe.ps1
 ```
 
-The resulting `dist\SponsorScout.exe` is the only artifact you need to ship.
+The artifact to ship is `dist\sponsorscout-<version>-setup.exe`.
 
 ### Common Windows-specific notes
 
-- **SmartScreen warning**: A fresh, unsigned `.exe` triggers "Windows protected your PC" the first time. Click **More info** → **Run anyway**. To eliminate this, sign the binary with a code-signing certificate (`signtool sign /fd SHA256 /a dist\SponsorScout.exe`).
+- **SmartScreen warning**: A fresh, unsigned installer triggers "Windows protected your PC" the first time. Click **More info** → **Run anyway**. To eliminate this, sign the binary with a code-signing certificate (`signtool sign /fd SHA256 /a dist\sponsorscout-<version>-setup.exe`).
 - **Antivirus false positives**: PyInstaller binaries are occasionally flagged. Submit a false-positive report to your AV vendor or sign the binary.
-- **Path with spaces**: Always OK — the .exe uses absolute internal paths.
+- **Path with spaces**: Always OK — the app uses absolute internal paths.
 - **tkinter on Windows**: Already bundled with the official python.org installer, so PyInstaller picks it up automatically. No extra steps.
 
 ---
