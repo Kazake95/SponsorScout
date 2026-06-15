@@ -50,6 +50,7 @@ cleanup.txt
 *.log
 data/*.csv
 data/*.json
+.clineignore
 
 # ── Build tools (large binaries, not for git) ─────────────────────────────
 windows_build_tools/
