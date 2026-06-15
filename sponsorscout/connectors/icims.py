@@ -56,10 +56,12 @@ class ICIMSConnector(BaseConnector):
                                 return self._parse_items(items, company, careers_url)
                         except Exception as exc:
                             logger.exception("Connector %s error", self.ats_name)
-                            pass
+                            # Fall through: scanner._scan_company turns the empty return
+                            # into an ats_health record_failure() call.
                 except Exception as exc:
                     logger.exception("Connector %s error", self.ats_name)
-                    pass
+                    # Fall through: scanner._scan_company turns the empty return
+                    # into an ats_health record_failure() call.
 
             # Fallback: HTML link scraping
             try:

@@ -373,7 +373,7 @@ def discover_companies_from_search(
     domains: list[str] | None = None,
     sponsorship_only: bool = False,
     remote_filter: str = "All",
-    search_engine: str = "all",
+    search_engine: str = "eu",
 ) -> list[dict]:
     """
     Discover companies using multiple strategies in order:
@@ -422,7 +422,7 @@ def discover_companies_from_search_engines(
     query: str,
     country: str = "",
     limit: int = 20,
-    search_engine: str = "all",
+    search_engine: str = "eu",
 ) -> list[dict]:
     """Discover ATS/company board URLs via configured web search engines."""
     engines = _resolve_search_engines(search_engine)

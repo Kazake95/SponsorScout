@@ -5,8 +5,27 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from sponsorscout.paths import DB_PATH, ensure_user_data_dir
+from sponsorscout.services.objectives import get_search_objective
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_connection(conn, db_path=DB_PATH):
+    """Apply standard PRAGMA settings to a fresh sqlite3 connection.
+
+    Centralised here so both ``_get_conn`` (context manager) and
+    ``get_connection`` (raw accessor) configure their connections identically.
+    """
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    # B3 fix: WAL allows concurrent readers but only one writer. Without a
+    # busy_timeout, parallel scanners would fail with "database is locked"
+    # the moment two threads tried to commit at the same time.
+    conn.execute("PRAGMA busy_timeout=5000")
+    # Performance: NORMAL is safe with WAL; reduces fsync overhead.
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
 
 
 @contextmanager
@@ -17,16 +36,7 @@ def _get_conn(db_path=DB_PATH):
         db_path = Path(db_path).expanduser()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         ensure_user_data_dir()
-        conn = sqlite3.connect(str(db_path), timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        # B3 fix: WAL allows concurrent readers but only one writer. Without a
-        # busy_timeout, parallel scanners would fail with "database is locked"
-        # the moment two threads tried to commit at the same time.
-        conn.execute("PRAGMA busy_timeout=5000")
-        # Performance: NORMAL is safe with WAL; reduces fsync overhead.
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn = _configure_connection(sqlite3.connect(str(db_path), timeout=30.0))
         yield conn
         conn.commit()
     except Exception:
@@ -42,17 +52,7 @@ def get_connection(db_path=DB_PATH):
     db_path = Path(db_path).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     ensure_user_data_dir()
-    conn = sqlite3.connect(str(db_path), timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    # B3 fix: WAL allows concurrent readers but only one writer. Without a
-    # busy_timeout, parallel scanners would fail with "database is locked"
-    # the moment two threads tried to commit at the same time.
-    conn.execute("PRAGMA busy_timeout=5000")
-    # Performance: NORMAL is safe with WAL; reduces fsync overhead.
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+    return _configure_connection(sqlite3.connect(str(db_path), timeout=30.0))
 
 
 def _apply_migrations(conn):
@@ -62,7 +62,7 @@ def _apply_migrations(conn):
         ("remote_type", "ALTER TABLE jobs ADD COLUMN remote_type TEXT DEFAULT 'onsite'"),
         ("eu_blue_card", "ALTER TABLE jobs ADD COLUMN eu_blue_card INTEGER DEFAULT 0"),
         ("has_relocation", "ALTER TABLE jobs ADD COLUMN has_relocation INTEGER DEFAULT 0"),
-        # BUGFIX: support the new "Experience" filter (v0.4.2).
+        # BUGFIX: support the new "Experience" filter (v0.1.1).
         ("experience_level", "ALTER TABLE jobs ADD COLUMN experience_level TEXT DEFAULT ''"),
     ]
     for col, sql in migrations:
@@ -141,11 +141,11 @@ def initialize(db_path=DB_PATH):
 def search_jobs(db_path, title="", company="", country="All", source_type="All",
                 verified_only=True, sponsorship_only=False, active_only=True,
                 remote_filter="All", eu_blue_card_only=False, relocation_only=False,
-                experience_filter="All", sort_by="best"):
+                experience_filter="All", sort_by="best", objective="Balanced"):
     conn = None
     try:
         conn = get_connection(db_path)
-        # BUGFIX (v0.4.2): the SELECT now also pulls `experience_level` and
+        # BUGFIX (v0.1.1): the SELECT now also pulls `experience_level` and
         # `first_seen_at` so the UI can render the new filter chip and the
         # new "Latest" sort. The COALESCE on experience_level means legacy
         # rows with NULL/'' show up under 'All' rather than getting filtered
@@ -160,6 +160,8 @@ def search_jobs(db_path, title="", company="", country="All", source_type="All",
                    COALESCE(experience_level, '') as experience_level
                    FROM jobs WHERE 1=1"""
         params = []
+        objective_cfg = get_search_objective(objective)
+
         if title:
             query += " AND lower(title) LIKE ?"
             params.append(f"%{title.lower()}%")
@@ -211,7 +213,37 @@ def search_jobs(db_path, title="", company="", country="All", source_type="All",
             else:
                 query += " AND experience_level = ?"
                 params.append(experience_filter.lower())
-        # BUGFIX (v0.4.2): new sort modes. Default 'best' keeps the old
+
+        # Objective profile filters: keep the backend broad, but let the
+        # search layer turn the same dataset into a stricter, more relevant
+        # view for the current user / goal.
+        if objective_cfg.min_match_score:
+            query += " AND match_score >= ?"
+            params.append(objective_cfg.min_match_score)
+        if objective_cfg.min_sponsorship_score:
+            query += " AND sponsorship_score >= ?"
+            params.append(objective_cfg.min_sponsorship_score)
+        if objective_cfg.require_blue_card:
+            query += " AND eu_blue_card = 1"
+        if objective_cfg.require_relocation:
+            query += " AND has_relocation = 1"
+
+        if objective_cfg.allowed_countries:
+            placeholders = ", ".join(["?"] * len(objective_cfg.allowed_countries))
+            remote_types = objective_cfg.allowed_remote_types or ("remote_eu", "remote_emea")
+            remote_placeholders = ", ".join(["?"] * len(remote_types))
+            query += (
+                f" AND (country IN ({placeholders}) "
+                f"OR (country = '' AND remote_type IN ({remote_placeholders})))"
+            )
+            params.extend(objective_cfg.allowed_countries)
+            params.extend(remote_types)
+        elif objective_cfg.allowed_remote_types:
+            placeholders = ", ".join(["?"] * len(objective_cfg.allowed_remote_types))
+            query += f" AND remote_type IN ({placeholders})"
+            params.extend(objective_cfg.allowed_remote_types)
+
+        # BUGFIX (v0.1.1): new sort modes. Default 'best' keeps the old
         # behavior (trust, freshness, match, sponsorship). 'latest' sorts
         # by when the job first appeared in the database so users see the
         # freshest postings first. 'sponsorship' is a shortcut for "show me
@@ -220,6 +252,8 @@ def search_jobs(db_path, title="", company="", country="All", source_type="All",
             query += " ORDER BY first_seen_at DESC, trust_score DESC"
         elif sort_by == "sponsorship":
             query += " ORDER BY sponsorship_score DESC, first_seen_at DESC, match_score DESC"
+        elif objective_cfg.is_strict:
+            query += " ORDER BY match_score DESC, sponsorship_score DESC, trust_score DESC, freshness_score DESC, last_verified_at DESC"
         else:  # 'best' or anything else
             query += " ORDER BY trust_score DESC, freshness_score DESC, match_score DESC, sponsorship_score DESC, last_verified_at DESC"
         rows = conn.execute(query, params).fetchall()

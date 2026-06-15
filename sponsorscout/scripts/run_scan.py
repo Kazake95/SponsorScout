@@ -33,9 +33,9 @@ def main():
     parser.add_argument("--remote-filter", default="All", choices=["All", "Remote EU", "Remote EMEA", "Remote Global", "Remote Only", "Hybrid"], help="Remote filter for portal discovery")
     parser.add_argument(
         "--search-engine",
-        default="all",
+        default="eu",
         help=(
-            "Search fallback provider: all, eu, or comma-separated engines. "
+            "Search fallback provider: eu (default), all, or comma-separated engines. "
             f"Available: {', '.join(sorted(SEARCH_ENGINES | SEARCH_ENGINE_ALIASES))}"
         ),
     )

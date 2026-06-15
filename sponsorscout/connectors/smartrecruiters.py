@@ -63,7 +63,8 @@ class SmartRecruitersConnector(BaseConnector):
                                 return jobs
                     except Exception as exc:
                         logger.exception("Connector %s error", self.ats_name)
-                        pass
+                        # Fall through: scanner._scan_company turns the empty return
+                        # into an ats_health record_failure() call.
 
             try:
                 r = session.get(careers_url, timeout=30)

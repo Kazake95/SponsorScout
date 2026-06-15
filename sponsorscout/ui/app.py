@@ -18,20 +18,21 @@ from sponsorscout.db.database import (
     delete_application, get_connection, DB_PATH,
 )
 from sponsorscout.services.country_config import ordered_countries
+from sponsorscout.services.objectives import available_search_objective_labels, normalize_objective
 from sponsorscout.core.dedup import dedup_jobs_in_db, dedup_companies_in_db
-from sponsorscout.services.background_scanner import BackgroundScanner
+from sponsorscout.services.scan_coordinator import ScanCoordinator
 from sponsorscout.services.ai_rating import (
-    rate_job, load_prompt, save_prompt, load_api_key, save_api_key,
+    load_prompt, save_prompt,
     DEFAULT_AI_PROMPT,
     load_cv_prompt, save_cv_prompt, load_cl_prompt, save_cl_prompt,
     DEFAULT_CV_PROMPT, DEFAULT_CL_PROMPT,
     load_cv, save_cv,
     load_base_cover_letter, save_base_cover_letter,
-    fetch_jd_from_url, tailor_cv, write_cover_letter,
-    load_model, save_model,
-    load_provider, save_provider, load_base_url, save_base_url,
-    SUGGESTED_MODELS_BY_PROVIDER,
+    fetch_jd_from_url,
+    build_rating_prompt, build_cv_prompt, build_cover_letter_prompt,
+    parse_rating_result, parse_text_result,
 )
+from sponsorscout.services.ai_webview import AIWebviewLauncher, AI_SITES, DEFAULT_SITE
 
 EXPERIENCE_OPTIONS = [
     "All",
@@ -44,8 +45,9 @@ EXPERIENCE_OPTIONS = [
     "Lead",
     "Exec",
 ]
-SORT_OPTIONS = ["Best match", "Latest", "Sponsored"]
+SORT_OPTIONS = ["Best match", "Latest", "Sponsored Only"]
 REMOTE_OPTIONS = ["All", "Remote EU", "Remote EMEA", "Remote Global", "Remote Only", "Hybrid"]
+OBJECTIVE_OPTIONS = available_search_objective_labels()
 
 
 class SponsorScoutApp(tk.Tk):
@@ -53,7 +55,7 @@ class SponsorScoutApp(tk.Tk):
     def __init__(self):
         super().__init__()
         load_saved_locale()
-        self.title("SponsorScout")
+        self.title("SponsorScout v0.1.1")
         self.geometry("1380x840")
         self._selected_job = None
         # BUG-FIX: initialise caches before _build_ui / load_results so
@@ -63,13 +65,14 @@ class SponsorScoutApp(tk.Tk):
         self._tailor_job_title: str = ""
         self._tailor_job_company: str = ""
         self._load_icon()
-        self._scanner = BackgroundScanner(
+        self._ai_webview = AIWebviewLauncher()
+        self._scanner = ScanCoordinator(
             db_path=DB_PATH,
-            interval_seconds=3600,
-            on_progress=lambda m: self.after(0, lambda msg=m: self.status_var.set(msg)),
+            on_progress=lambda m: self.status_var.set(m),
             on_complete=lambda _: self.after(0, self._on_scan_complete),
         )
         self._build_ui()
+        self._scanner.set_on_progress(self._on_scan_progress)
         self.load_results()
         self.load_dashboard()
         self.load_applications()
@@ -107,13 +110,24 @@ class SponsorScoutApp(tk.Tk):
 
     def _on_close(self):
         self._scanner.stop()
-        self.destroy()
+        self._ai_webview.close()
+        try:
+            self.quit()
+        finally:
+            self.destroy()
+
+    def _on_scan_progress(self, msg: str):
+        self._append_scan_log(msg)
+        self.status_var.set(msg)
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
 
     def _on_scan_complete(self):
         self.load_dashboard()
         self.load_results()
         self.load_health()
-        # FIX-3a: reset scan_status label when scan finishes
         self.scan_status.set("idle")
         self.status_var.set("Scan complete.")
 
@@ -123,8 +137,8 @@ class SponsorScoutApp(tk.Tk):
                 if messagebox.askyesno(
                     "Welcome to SponsorScout",
                     "No data yet.\n\n"
-                    "Run the first scan now? Fetches live jobs from 111\n"
-                    "companies via their official ATS APIs (1–3 min)."
+                    "Run the first scan now? Fetches jobs from each company's\n"
+                    "official career page first, then ATS fallback connectors (1–3 min)."
                 ):
                     self.tabs.select(self.tools_tab)
                     self._run_scan_now()
@@ -145,7 +159,7 @@ class SponsorScoutApp(tk.Tk):
                  font=("Helvetica", 13, "bold"),
                  fg="white", bg="#1d2d44").pack(side="left")
         tk.Label(hdr,
-                 text=f"  ·  {_('Verified sponsorship-focused jobs from official ATS boards')}",
+                 text=f"  ·  {_('Verified sponsorship-focused jobs from official career pages and ATS boards')}",
                  font=("Helvetica", 9), fg="#8fa8c8",
                  bg="#1d2d44").pack(side="left")
         # Language toggle
@@ -215,12 +229,14 @@ class SponsorScoutApp(tk.Tk):
         self.health_tab       = ttk.Frame(self.tabs)
         self.tools_tab        = ttk.Frame(self.tabs)
         self.tailor_tab       = ttk.Frame(self.tabs)
+        self.ai_assistant_tab = ttk.Frame(self.tabs)
 
         self.tabs.add(self.search_tab,       text=_("Search"))
         self.tabs.add(self.dashboard_tab,    text=_("Dashboard"))
         self.tabs.add(self.applications_tab, text=_("Applications"))
         self.tabs.add(self.health_tab,       text=_("ATS Health"))
         self.tabs.add(self.tailor_tab,       text=_("✨ AI Tailor"))
+        self.tabs.add(self.ai_assistant_tab, text=_("🤖 AI Assistant"))
         self.tabs.add(self.tools_tab,        text=_("Tools"))
         self.tabs.pack(fill="both", expand=True)
 
@@ -229,6 +245,7 @@ class SponsorScoutApp(tk.Tk):
         self._build_applications_tab()
         self._build_health_tab()
         self._build_tailor_tab()
+        self._build_ai_assistant_tab()
         self._build_tools_tab()
 
     # ── Search tab ────────────────────────────────────────────────────────────
@@ -243,6 +260,7 @@ class SponsorScoutApp(tk.Tk):
         self.spons_var      = tk.StringVar(value=_("All"))
         self.remote_var     = tk.StringVar(value=_("All"))
         self.experience_var = tk.StringVar(value=_("All"))
+        self.objective_var  = tk.StringVar(value="Balanced")
         self.sort_var       = tk.StringVar(value=_("Best match"))
         self.eu_bc_var      = tk.BooleanVar()
         self.reloc_var      = tk.BooleanVar()
@@ -289,13 +307,19 @@ class SponsorScoutApp(tk.Tk):
             _("Unknown / Not classified"), _("Intern"), _("Entry"),
             _("Mid"), _("Senior"), _("Lead"), _("Exec")
         ], 18).pack(side="left", padx=(3, 10))
-        lbl(r2, _("Sort:")).pack(side="left")
+
+        r3 = tk.Frame(bar, bg="#ffffff")
+        r3.pack(fill="x", pady=(5, 0))
+        lbl(r3, _("Sort:")).pack(side="left")
         cmb(self.sort_var, [_("Best match"), _("Latest"), _("Sponsored Only")], 12
             ).pack(side="left", padx=(3, 10))
-        tk.Checkbutton(r2, text=_("EU Blue Card"), variable=self.eu_bc_var,
+        lbl(r3, _("Objective:")).pack(side="left")
+        cmb(self.objective_var, OBJECTIVE_OPTIONS, 16
+            ).pack(side="left", padx=(3, 10))
+        tk.Checkbutton(r3, text=_("EU Blue Card"), variable=self.eu_bc_var,
                        bg="#ffffff", font=("Helvetica", 9),
                        fg="#444").pack(side="left", padx=(6, 4))
-        tk.Checkbutton(r2, text=_("Relocation"), variable=self.reloc_var,
+        tk.Checkbutton(r3, text=_("Relocation"), variable=self.reloc_var,
                        bg="#ffffff", font=("Helvetica", 9),
                        fg="#444").pack(side="left")
 
@@ -364,14 +388,19 @@ class SponsorScoutApp(tk.Tk):
         ai_inner.pack(fill="both", expand=True, padx=4, pady=4)
         ai_hdr = tk.Frame(ai_inner, bg="#f8f9fa")
         ai_hdr.pack(fill="x", pady=(0, 4))
-        self._ai_rate_btn = ttk.Button(ai_hdr, text=f"▶ {_('Rate this job')}",
-                                        command=self._run_ai_rating)
-        self._ai_rate_btn.pack(side="left", padx=(0, 4))
+        self._ai_copy_btn = ttk.Button(
+            ai_hdr, text=f"📋 {_('Copy Rating Prompt')}",
+            command=self._copy_rating_prompt)
+        self._ai_copy_btn.pack(side="left", padx=(0, 4))
+        self._ai_paste_btn = ttk.Button(
+            ai_hdr, text=f"📥 {_('Paste AI Result')}",
+            command=self._paste_rating_result)
+        self._ai_paste_btn.pack(side="left", padx=4)
         self._ai_tailor_btn = ttk.Button(
             ai_hdr, text=f"📄 {_('Tailor CV & Letter')}",
             command=self._open_tailor_for_selected)
         self._ai_tailor_btn.pack(side="left", padx=4)
-        self._ai_result_var = tk.StringVar(value=_("Select a job, then click 'Rate this job'."))
+        self._ai_result_var = tk.StringVar(value=_("Select a job, click 'Copy Rating Prompt', paste it into the AI Assistant tab, then click 'Paste AI Result'."))
         self._ai_cv_hint_var = tk.StringVar(value="")
         tk.Label(ai_hdr, textvariable=self._ai_cv_hint_var,
                  font=("Helvetica", 8, "italic"), fg="#3a7bd5",
@@ -387,7 +416,7 @@ class SponsorScoutApp(tk.Tk):
         ctx = tk.Menu(self.tree, tearoff=0)
         ctx.add_command(label=_("Open in browser"), command=self._open_url)
         ctx.add_command(label=_("Save to Applications"), command=self._save_to_apps)
-        ctx.add_command(label=_("Rate with AI"), command=self._run_ai_rating)
+        ctx.add_command(label=_("Copy Rating Prompt"), command=self._copy_rating_prompt)
         ctx.add_command(label=_("Tailor CV & Cover Letter"), command=self._open_tailor_for_selected)
         self._ctx_menu = ctx
 
@@ -416,49 +445,12 @@ class SponsorScoutApp(tk.Tk):
         self._sort_col = None
         self._sort_asc = True
 
-    def _run_ai_rating(self):
+    def _copy_rating_prompt(self):
         if not self._selected_job:
-            self._ai_result_var.set("No job selected.")
+            self._ai_result_var.set(_("No job selected."))
             return
         v = self._selected_job
         url = str(v[-1])
-
-        # Return cached result immediately
-        if url in self._ai_cache:
-            self._show_ai_result(self._ai_cache[url])
-            return
-
-        api_key = load_api_key()
-        if not api_key:
-            result = messagebox.askyesno(
-                "AI API Key Required",
-                "AI features need a free API key.\n\n"
-                "Quick start (recommended):\n"
-                "  1. Get a free Gemini key at:\n"
-                "     https://aistudio.google.com/apikey\n"
-                "  2. Paste it below → 'Save Key' → OK\n\n"
-                "Other providers: NVIDIA NIM, OpenAI, OpenRouter, Groq, Ollama.\n\n"
-                "Open AI Settings now?"
-            )
-            if result:
-                self.tabs.select(self.tools_tab)
-            return
-
-        # Show CV status
-        cv_text = load_cv()
-        if cv_text:
-            self._ai_cv_hint_var.set(_("Rating against your saved CV profile"))
-        else:
-            self._ai_cv_hint_var.set(_("No CV on file — paste yours in AI Tailor tab for personalised results"))
-
-        provider = load_provider()
-        if provider == "gemini":
-            self._ai_result_var.set(_("Contacting Gemini API..."))
-        elif provider == "custom":
-            self._ai_result_var.set(_("Contacting custom AI endpoint..."))
-        else:
-            self._ai_result_var.set(_("Contacting {provider} OpenAI-compatible API...").format(provider=provider))
-        self._ai_rate_btn.config(state="disabled")
 
         title   = str(v[0])
         company = str(v[1])
@@ -467,6 +459,13 @@ class SponsorScoutApp(tk.Tk):
         remote  = str(v[4])
         bluecard = v[6] == "✓"
         reloc    = v[7] == "✓"
+
+        # Show CV status
+        cv_text = load_cv()
+        if cv_text:
+            self._ai_cv_hint_var.set(_("Rating against your saved CV profile"))
+        else:
+            self._ai_cv_hint_var.set(_("No CV on file — paste yours in AI Assistant tab for personalised results"))
 
         # Fetch description from DB
         try:
@@ -478,36 +477,40 @@ class SponsorScoutApp(tk.Tk):
             logger.exception("Failed to load job description for AI rating")
             description = ""
 
-        def _worker():
-            result = None
-            try:
-                result = rate_job(
-                    title=title, company=company, country=country,
-                    description=description, sponsorship_score=spons,
-                    remote_type=remote, eu_blue_card=bluecard,
-                    has_relocation=reloc, api_key=api_key,
-                )
-                # Only cache successful results — never cache errors so that
-                # clicking "Rate this job" again (e.g. after changing the
-                # model or waiting for a 503 to clear) will actually retry
-                # the API call instead of replaying the old error.
-                if not result.get("error"):
-                    self._ai_cache[url] = result
-            except Exception as exc:
-                logger.exception("AI rating worker failed")
-                result = {
-                    "error": "AI rating failed unexpectedly. Check the logs for details."
-                }
-            finally:
-                self.after(0, lambda r=result: self._show_ai_result(r))
-                self.after(0, lambda: self._ai_rate_btn.config(state="normal"))
-                if result and not result.get("error") and "rating" in result:
-                    rating = result["rating"]
-                    sel = self.tree.selection()
-                    if sel:
-                        self.after(0, lambda r=rating, s=sel: self._update_ai_rating_in_tree(r, s))
+        prompt = build_rating_prompt(
+            title=title, company=company, country=country,
+            description=description, sponsorship_score=spons,
+            remote_type=remote, eu_blue_card=bluecard,
+            has_relocation=reloc,
+            objective=self.objective_var.get(),
+        )
+        self.clipboard_clear()
+        self.clipboard_append(prompt)
+        self._tailor_job_title   = title
+        self._tailor_job_company = company
+        self._ai_pending_url = url
+        self._ai_result_var.set(
+            _("✓ Prompt copied! Paste it into the AI Assistant tab, "
+              "copy the reply, then click 'Paste AI Result' here."))
 
-        threading.Thread(target=_worker, daemon=True).start()
+    def _paste_rating_result(self):
+        if not self._selected_job:
+            self._ai_result_var.set(_("No job selected."))
+            return
+        v = self._selected_job
+        url = str(v[-1])
+        try:
+            pasted = self.clipboard_get()
+        except Exception:
+            pasted = ""
+        result = parse_rating_result(pasted)
+        if not result.get("error"):
+            self._ai_cache[url] = result
+            rating = result.get("rating")
+            sel = self.tree.selection()
+            if sel and isinstance(rating, int):
+                self._update_ai_rating_in_tree(rating, sel)
+        self._show_ai_result(result)
 
     def _update_ai_rating_in_tree(self, rating: int, sel: tuple):
         """Update the AI rating column in the treeview (must run on main thread)."""
@@ -579,6 +582,7 @@ class SponsorScoutApp(tk.Tk):
         self.spons_var.set(_("All"))
         self.remote_var.set(_("All"))
         self.experience_var.set(_("All"))
+        self.objective_var.set("Balanced")
         self.sort_var.set(_("Best match"))
         self.eu_bc_var.set(False)
         self.reloc_var.set(False)
@@ -594,14 +598,14 @@ class SponsorScoutApp(tk.Tk):
             if cv_text:
                 self._ai_cv_hint_var.set(_("Rating will use your saved CV profile"))
             else:
-                self._ai_cv_hint_var.set(_("No CV on file — paste yours in AI Tailor tab for personalised results"))
+                self._ai_cv_hint_var.set(_("No CV on file — paste yours in AI Assistant tab for personalised results"))
             if url in self._ai_cache:
                 self._show_ai_result(self._ai_cache[url])
             else:
-                self._ai_result_var.set(_("Select a job, then click 'Rate this job'."))
+                self._ai_result_var.set(_("Select a job, then click 'Copy Rating Prompt'."))
         else:
             self._ai_cv_hint_var.set("")
-            self._ai_result_var.set(_("Select a job, then click 'Rate this job'."))
+            self._ai_result_var.set(_("Select a job, then click 'Copy Rating Prompt'."))
 
     def _open_url(self, _=None):
         sel = self.tree.selection()
@@ -889,28 +893,30 @@ class SponsorScoutApp(tk.Tk):
         act_info.pack(side="left", padx=(4, 0))
         act_info.bind("<Button-1>", lambda e: messagebox.showinfo(
             "Generate Buttons",
-            "• 'Tailor My CV' → rewrites your CV for this\n"
-            "  specific role (keywords, achievements, ATS optimisation)\n\n"
-            "• 'Write Cover Letter' → generates a personalised\n"
-            "  cover/motivation letter using your CV + JD + template\n\n"
-            "• 'Both' → generates both CV and cover letter at once\n\n"
-            "Requires: CV saved + JD confirmed + AI API key"))
+            "• 'Copy CV Prompt' → copies a ready-to-paste prompt that\n"
+            "  asks an AI to rewrite your CV for this role\n\n"
+            "• 'Copy Cover Letter Prompt' → copies a prompt that asks\n"
+            "  an AI to write a personalised cover letter\n\n"
+            "Paste the copied prompt into the 🤖 AI Assistant tab,\n"
+            "send it, then copy the AI's reply and paste it into the\n"
+            "Result box below using 'Paste CV' / 'Paste Cover Letter'.\n\n"
+            "Requires: CV saved + JD confirmed"))
         act_frame = tk.Frame(right_inner, bg="#ffffff", padx=10, pady=4)
         act_frame.pack(fill="x", pady=(0, 4))
 
         act_row = tk.Frame(act_frame, bg="#ffffff"); act_row.pack(fill="x")
-        self._gen_cv_btn = ttk.Button(
-            act_row, text="📄 Tailor My CV",
-            command=lambda: self._run_tailor("cv"))
-        self._gen_cv_btn.pack(side="left", padx=(0, 6))
-        self._gen_cl_btn = ttk.Button(
-            act_row, text="✉ Write Cover Letter",
-            command=lambda: self._run_tailor("cl"))
-        self._gen_cl_btn.pack(side="left", padx=(0, 6))
-        self._gen_both_btn = ttk.Button(
-            act_row, text="⚡ Both",
-            command=lambda: self._run_tailor("both"))
-        self._gen_both_btn.pack(side="left")
+        self._copy_cv_prompt_btn = ttk.Button(
+            act_row, text="📋 Copy CV Prompt",
+            command=lambda: self._copy_tailor_prompt("cv"))
+        self._copy_cv_prompt_btn.pack(side="left", padx=(0, 6))
+        self._copy_cl_prompt_btn = ttk.Button(
+            act_row, text="📋 Copy Cover Letter Prompt",
+            command=lambda: self._copy_tailor_prompt("cl"))
+        self._copy_cl_prompt_btn.pack(side="left", padx=(0, 6))
+        self._open_ai_btn = ttk.Button(
+            act_row, text="🤖 Open AI Assistant",
+            command=lambda: self.tabs.select(self.ai_assistant_tab))
+        self._open_ai_btn.pack(side="left")
 
         self._tailor_progress_var = tk.StringVar(value="")
         tk.Label(act_frame, textvariable=self._tailor_progress_var,
@@ -929,9 +935,13 @@ class SponsorScoutApp(tk.Tk):
         res_info.pack(side="left", padx=(4, 0))
         res_info.bind("<Button-1>", lambda e: messagebox.showinfo(
             "Result Area",
-            "Switch between CV / Cover Letter tabs above.\n\n"
-            "Click '📋 Copy' to put the result on your\n"
-            "clipboard, then paste into your job application.\n\n"
+            "1. Get the AI's reply in the 🤖 AI Assistant tab and\n"
+            "   copy it (select all, Ctrl+C).\n\n"
+            "2. Switch between CV / Cover Letter tabs above, then\n"
+            "   click '📥 Paste CV' or '📥 Paste Cover Letter' to\n"
+            "   bring the reply in from your clipboard.\n\n"
+            "3. Click '📋 Copy' to put the result back on your\n"
+            "   clipboard for your job application.\n\n"
             "TIP: You can edit the result and re-copy as needed."))
         res_frame = tk.Frame(right_inner, bg="#ffffff", padx=10, pady=4)
         res_frame.pack(fill="both", expand=True, pady=(0, 10))
@@ -942,12 +952,14 @@ class SponsorScoutApp(tk.Tk):
                         value="cv", command=self._switch_result_view).pack(side="left")
         ttk.Radiobutton(res_toolbar, text="Cover Letter", variable=self._result_tab_var,
                         value="cl", command=self._switch_result_view).pack(side="left", padx=8)
+        ttk.Button(res_toolbar, text="📥 Paste",
+                   command=self._paste_tailor_result).pack(side="right", padx=(4, 0))
         ttk.Button(res_toolbar, text="📋 Copy",
                    command=self._copy_result).pack(side="right")
 
         self._result_box = _st.ScrolledText(
             res_frame, height=10, wrap="word",
-            font=("Courier", 9), relief="solid", bd=1, state="disabled")
+            font=("Courier", 9), relief="solid", bd=1)
         self._result_box.pack(fill="both", expand=True)
 
         # Internal result storage
@@ -955,6 +967,7 @@ class SponsorScoutApp(tk.Tk):
         self._tailor_cl_result = ""
 
     # ── Tailor helpers ─────────────────────────────────────────────────────────
+
 
     def _on_jd_changed(self, _=None):
         self._jd_text_box.edit_modified(False)
@@ -1023,16 +1036,18 @@ class SponsorScoutApp(tk.Tk):
             "3. BASE COVER LETTER (right column — optional)\n"
             "   • Paste an example cover letter you like as a template.\n"
             "     AI will match its style/tone when generating new ones.\n\n"
-            "4. GENERATE (right column)\n"
-            "   • 'Tailor My CV' — rewrites your CV for this specific role\n"
-            "   • 'Write Cover Letter' — writes a personalised cover letter\n"
-            "   • 'Both' — generates both at once\n\n"
-            "5. RESULT (below Generate)\n"
-            "   • Toggle between CV / Cover Letter tabs\n"
-            "   • Click 'Copy' to put the result on your clipboard\n"
-            "   • Paste into your application\n\n"
+            "4. COPY A PROMPT (right column)\n"
+            "   • 'Copy CV Prompt' or 'Copy Cover Letter Prompt' copies a\n"
+            "     ready-to-use prompt to your clipboard.\n\n"
+            "5. AI ASSISTANT TAB\n"
+            "   • Click '🤖 Open AI Assistant', paste the prompt into the\n"
+            "     chat, send it, and copy the AI's reply.\n\n"
+            "6. RESULT (below)\n"
+            "   • Switch between CV / Cover Letter, click '📥 Paste' to\n"
+            "     bring in the AI's reply, edit if needed, then '📋 Copy'\n"
+            "     to use it in your application.\n\n"
             "TIP: Paste your CV once → select jobs from Search tab →\n"
-            "     click '📄 Tailor CV & Letter' to auto-fill everything."
+            "     click '📄 Tailor CV & Letter' to auto-fill the JD."
         )
 
     def _make_section_header(self, parent, title, tooltip_text="", bg="#ffffff"):
@@ -1051,25 +1066,8 @@ class SponsorScoutApp(tk.Tk):
                       messagebox.showinfo(title, t))
         return row
 
-    def _run_tailor(self, mode: str):
-        """mode: 'cv', 'cl', or 'both'"""
-        api_key = load_api_key()
-        if not api_key:
-            messagebox.showwarning(
-                "AI API Key Required",
-                "AI features need a free API key.\n\n"
-                "Quick start (recommended):\n"
-                "  1. Get a free Gemini key at:\n"
-                "     https://aistudio.google.com/apikey\n"
-                "  2. Select provider 'gemini' in Tools → AI Settings\n"
-                "  3. Paste key → Save Key → Save\n\n"
-                "Also supports: NVIDIA NIM, OpenAI, OpenRouter,\n"
-                "Groq, Together, Ollama (local/free).\n\n"
-                "Open AI Settings now?"
-            )
-            self.tabs.select(self.tools_tab)
-            return
-
+    def _copy_tailor_prompt(self, mode: str):
+        """mode: 'cv' or 'cl'. Builds the prompt and copies it to clipboard."""
         jd = self._tailor_jd_text.strip()
         if not jd:
             # Try reading from the text box directly
@@ -1089,77 +1087,182 @@ class SponsorScoutApp(tk.Tk):
                 "Paste your CV in the 'My CV' box and save it first.")
             return
 
-        for btn in (self._gen_cv_btn, self._gen_cl_btn, self._gen_both_btn):
-            btn.config(state="disabled")
-        label = {"cv": "CV", "cl": "Cover Letter", "both": "CV + Cover Letter"}[mode]
-        self._tailor_progress_var.set(f"⏳ Generating {label}…")
+        if mode == "cv":
+            prompt = build_cv_prompt(cv_text, jd)
+            label = "CV"
+        else:
+            prompt = build_cover_letter_prompt(
+                cv_text, jd,
+                base_letter=self._cl_template_box.get("1.0", "end").strip(),
+            )
+            label = "Cover Letter"
 
-        def _worker():
-            cv_result = cl_result = ""
-            error = None
-            try:
-                if mode in ("cv", "both"):
-                    r = tailor_cv(cv_text, jd, api_key)
-                    if r["error"]:
-                        error = r["error"]
-                    else:
-                        cv_result = r["text"]
+        self.clipboard_clear()
+        self.clipboard_append(prompt)
+        self._result_tab_var.set(mode)
+        self._tailor_progress_var.set(
+            f"✓ {label} prompt copied! Open the AI Assistant tab, paste, "
+            f"send, copy the reply, then click '📥 Paste' below.")
 
-                if not error and mode in ("cl", "both"):
-                    r = write_cover_letter(
-                        cv_text, jd, api_key,
-                        base_letter=self._cl_template_box.get("1.0", "end").strip(),
-                    )
-                    if r["error"]:
-                        error = r["error"]
-                    else:
-                        cl_result = r["text"]
-            except Exception as exc:
-                error = str(exc)
-
-            def _done():
-                for btn in (self._gen_cv_btn, self._gen_cl_btn, self._gen_both_btn):
-                    btn.config(state="normal")
-                if error:
-                    self._tailor_progress_var.set(f"❌ {error}")
-                    return
-                if cv_result:
-                    self._tailor_cv_result = cv_result
-                if cl_result:
-                    self._tailor_cl_result = cl_result
-                # Show the first generated result
-                if mode == "cl":
-                    self._result_tab_var.set("cl")
-                else:
-                    self._result_tab_var.set("cv")
-                self._switch_result_view()
-                parts = []
-                if cv_result:
-                    parts.append("CV")
-                if cl_result:
-                    parts.append("Cover Letter")
-                self._tailor_progress_var.set(f"✓ {' + '.join(parts)} ready — copy with the button above")
-            self.after(0, _done)
-
-        import threading as _t
-        _t.Thread(target=_worker, daemon=True).start()
+    def _paste_tailor_result(self):
+        """Paste the AI's reply (from clipboard) into the active result box."""
+        try:
+            pasted = self.clipboard_get()
+        except Exception:
+            pasted = ""
+        parsed = parse_text_result(pasted)
+        if parsed.get("error"):
+            self._tailor_progress_var.set(f"❌ {parsed['error']}")
+            return
+        text = parsed["text"]
+        mode = self._result_tab_var.get()
+        if mode == "cv":
+            self._tailor_cv_result = text
+        else:
+            self._tailor_cl_result = text
+        self._switch_result_view()
+        label = "CV" if mode == "cv" else "Cover Letter"
+        self._tailor_progress_var.set(f"✓ {label} pasted — edit if needed, then '📋 Copy'")
 
     def _switch_result_view(self):
         mode = self._result_tab_var.get()
         text = self._tailor_cv_result if mode == "cv" else self._tailor_cl_result
-        self._result_box.config(state="normal")
         self._result_box.delete("1.0", "end")
-        self._result_box.insert("1.0", text or "(nothing generated yet)")
-        self._result_box.config(state="disabled")
+        self._result_box.insert("1.0", text or "(nothing pasted yet)")
 
     def _copy_result(self):
         mode = self._result_tab_var.get()
-        text = self._tailor_cv_result if mode == "cv" else self._tailor_cl_result
+        # Use whatever is currently in the box (the user may have edited it).
+        text = self._result_box.get("1.0", "end").strip()
+        if mode == "cv":
+            self._tailor_cv_result = text
+        else:
+            self._tailor_cl_result = text
         if not text:
             return
         self.clipboard_clear()
         self.clipboard_append(text)
         self._tailor_progress_var.set("✓ Copied to clipboard!")
+
+    # ── AI Assistant tab ──────────────────────────────────────────────────────
+
+    def _build_ai_assistant_tab(self):
+        outer = tk.Frame(self.ai_assistant_tab, bg="#f0f2f5", padx=14, pady=10)
+        outer.pack(fill="both", expand=True)
+
+        hdr = tk.Frame(outer, bg="#f0f2f5")
+        hdr.pack(fill="x", pady=(0, 8))
+        tk.Label(hdr, text=f"🤖  {_('AI Assistant')}",
+                 font=("Helvetica", 13, "bold"),
+                 fg="#1d2d44", bg="#f0f2f5").pack(side="left")
+        tk.Label(hdr,
+                 text=f"  ·  {_('Chat with a free web AI — no API key needed')}",
+                 font=("Helvetica", 9), fg="#8fa8c8",
+                 bg="#f0f2f5").pack(side="left")
+        help_btn = ttk.Button(hdr, text=f"📖 {_('How to use')}",
+                              command=self._show_ai_assistant_help)
+        help_btn.pack(side="right")
+
+        # ── Open AI chat ──────────────────────────────────────────────────
+        chat_frame = tk.Frame(outer, bg="#ffffff", padx=10, pady=8)
+        chat_frame.pack(fill="x", pady=(0, 8))
+        tk.Label(chat_frame, text=_("Open AI Chat"),
+                 font=("Helvetica", 9, "bold"),
+                 fg="#1d2d44", bg="#ffffff").pack(anchor="w")
+        tk.Label(chat_frame,
+                 text=_("Opens the AI chat in your normal web browser — uses "
+                        "whatever account you're already signed into there. "
+                        "Paste a prompt from the AI Tailor tab or Search tab, "
+                        "send it, then copy the reply back."),
+                 font=("Helvetica", 8), fg="#888", bg="#ffffff",
+                 wraplength=900, justify="left").pack(anchor="w", pady=(2, 6))
+
+        site_row = tk.Frame(chat_frame, bg="#ffffff")
+        site_row.pack(fill="x")
+        tk.Label(site_row, text=_("Site:"), font=("Helvetica", 9),
+                 bg="#ffffff").pack(side="left")
+        self._ai_site_var = tk.StringVar(value=DEFAULT_SITE)
+        ttk.Combobox(site_row, textvariable=self._ai_site_var,
+                     values=list(AI_SITES.keys()), width=14,
+                     state="readonly").pack(side="left", padx=(6, 8))
+        ttk.Button(site_row, text=f"🌐 {_('Open AI Chat')}",
+                   command=self._open_ai_webview).pack(side="left")
+        self._ai_webview_status_var = tk.StringVar(value="")
+        tk.Label(site_row, textvariable=self._ai_webview_status_var,
+                 font=("Helvetica", 8, "italic"), fg="#3a7bd5",
+                 bg="#ffffff").pack(side="left", padx=(10, 0))
+
+        # ── Eligibility Rating ────────────────────────────────────────────
+        elig_frame = tk.Frame(outer, bg="#ffffff", padx=10, pady=8)
+        elig_frame.pack(fill="x", pady=(0, 8))
+        tk.Label(elig_frame, text=_("Eligibility Rating"),
+                 font=("Helvetica", 9, "bold"),
+                 fg="#1d2d44", bg="#ffffff").pack(anchor="w")
+        tk.Label(elig_frame,
+                 text=_("From the Search tab: select a job, click '📋 Copy Rating Prompt', "
+                        "paste it into the AI chat above, then come back, copy the "
+                        "reply and click '📥 Paste AI Result' in the Search tab."),
+                 font=("Helvetica", 8), fg="#888", bg="#ffffff",
+                 wraplength=900, justify="left").pack(anchor="w", pady=(2, 0))
+        ttk.Button(elig_frame, text=_("Go to Search tab"),
+                   command=lambda: self.tabs.select(self.search_tab)
+                   ).pack(anchor="w", pady=(6, 0))
+
+        # ── CV Tailoring & Cover Letter ──────────────────────────────────
+        cvcl_frame = tk.Frame(outer, bg="#ffffff", padx=10, pady=8)
+        cvcl_frame.pack(fill="x", pady=(0, 8))
+        tk.Label(cvcl_frame, text=_("CV Tailoring & Cover Letter"),
+                 font=("Helvetica", 9, "bold"),
+                 fg="#1d2d44", bg="#ffffff").pack(anchor="w")
+        tk.Label(cvcl_frame,
+                 text=_("From the ✨ AI Tailor tab: confirm a job description, then click "
+                        "'📋 Copy CV Prompt' or '📋 Copy Cover Letter Prompt'. Paste it into "
+                        "the AI chat above, then copy the reply back into the Result box "
+                        "with '📥 Paste'."),
+                 font=("Helvetica", 8), fg="#888", bg="#ffffff",
+                 wraplength=900, justify="left").pack(anchor="w", pady=(2, 0))
+        ttk.Button(cvcl_frame, text=_("Go to AI Tailor tab"),
+                   command=lambda: self.tabs.select(self.tailor_tab)
+                   ).pack(anchor="w", pady=(6, 0))
+
+    def _open_ai_webview(self):
+        site = self._ai_site_var.get().strip() or DEFAULT_SITE
+        self._ai_webview_status_var.set(_("⏳ Opening {site}…").format(site=site))
+        self.update_idletasks()
+        try:
+            self._ai_webview.open(site)
+            self._ai_webview_status_var.set(
+                _("✓ Opened {site} in your browser — sign in there if needed.")
+                .format(site=site))
+        except Exception as exc:
+            logger.exception("Failed to open AI chat in browser")
+            self._ai_webview_status_var.set(f"❌ {exc}")
+            messagebox.showerror(
+                _("Could not open AI chat"),
+                _("Failed to open {site} in your browser:\n\n{error}\n\n"
+                  "Make sure a default web browser is set up on this "
+                  "computer.").format(site=site, error=exc))
+
+    def _show_ai_assistant_help(self):
+        messagebox.showinfo(
+            _("AI Assistant — How to Use"),
+            _("This tab opens a normal web AI chat (ChatGPT, Gemini, Claude, "
+              "Mistral, Perplexity) in your default web browser, using "
+              "whichever account you're already signed into there.\n\n"
+              "WORKFLOW:\n\n"
+              "1. Pick a site and click '🌐 Open AI Chat'. Sign in if needed "
+              "(your browser will remember it).\n\n"
+              "2. In the Search tab or AI Tailor tab, click one of the "
+              "'📋 Copy ... Prompt' buttons. This copies a ready-made prompt "
+              "(including your CV/JD context) to your clipboard.\n\n"
+              "3. Switch to the AI chat tab in your browser, paste the prompt "
+              "(Ctrl+V), and send it.\n\n"
+              "4. Select the AI's full reply, copy it (Ctrl+C).\n\n"
+              "5. Back in SponsorScout, click '📥 Paste AI Result' (Search tab) or "
+              "'📥 Paste' (AI Tailor tab) to bring the reply in.\n\n"
+              "No API key required — everything runs through the AI's normal "
+              "web chat, just like using it in a browser tab.")
+        )
 
     # ── Dashboard tab ─────────────────────────────────────────────────────────
 
@@ -1462,7 +1565,7 @@ class SponsorScoutApp(tk.Tk):
 
         # ── Scanner ───────────────────────────────────────────────────────
         sc = section("Scanner",
-                     "Scan all 111 companies via their official ATS APIs.")
+                     "Manual scan only. SponsorScout does not run periodic background scans.")
         sr = tk.Frame(sc, bg="#ffffff"); sr.pack(fill="x")
         self.scan_status = tk.StringVar(value="idle")
         tk.Label(sr, text="Status:", font=("Helvetica", 9),
@@ -1472,10 +1575,6 @@ class SponsorScoutApp(tk.Tk):
                  fg="#3a7bd5", bg="#ffffff").pack(side="left", padx=6)
         ttk.Button(sr, text="▶  Scan Now",
                    command=self._run_scan_now).pack(side="left", padx=(20, 4))
-        ttk.Button(sr, text="⏰  Auto (1 h)",
-                   command=self._start_auto_scan).pack(side="left", padx=4)
-        ttk.Button(sr, text="⏹  Stop",
-                   command=self._stop_auto_scan).pack(side="left", padx=4)
 
         # Live progress log — shows per-company results streaming in
         log_hdr = tk.Frame(sc, bg="#ffffff"); log_hdr.pack(fill="x", pady=(8, 0))
@@ -1494,75 +1593,10 @@ class SponsorScoutApp(tk.Tk):
         ttk.Button(dq, text="Run Dedup",
                    command=self._run_dedup).pack(anchor="w")
 
-        # ── AI Settings ───────────────────────────────────────────────────
-        ai = section("AI Settings",
-                     "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.")
-        ak_row = tk.Frame(ai, bg="#ffffff"); ak_row.pack(fill="x", pady=(0, 6))
-        tk.Label(ak_row, text="AI API Key / Token:", font=("Helvetica", 9),
-                 bg="#ffffff").pack(side="left")
-        self._api_key_var = tk.StringVar(value=load_api_key())
-        ak_entry = ttk.Entry(ak_row, textvariable=self._api_key_var,
-                              width=48, show="*")
-        ak_entry.pack(side="left", padx=(6, 8))
-        ttk.Button(ak_row, text="Save Key",
-                   command=self._save_api_key).pack(side="left")
-
-        # ── Provider / model / base-URL selector (any-model, any-provider) ─
-        prov_row = tk.Frame(ai, bg="#ffffff"); prov_row.pack(fill="x", pady=(0, 4))
-        tk.Label(prov_row, text="Provider:", font=("Helvetica", 9),
-                 fg="#1d2d44", bg="#ffffff").pack(side="left")
-        self._provider_var = tk.StringVar(value=load_provider())
-        self._base_url_var = tk.StringVar(value=load_base_url())
-        prov_combo = ttk.Combobox(
-            prov_row, textvariable=self._provider_var,
-            values=("gemini", "openai", "nvidia", "openrouter", "groq", "together", "ollama", "custom"),
-            width=12, state="readonly")
-        prov_combo.pack(side="left", padx=(6, 8))
-        # BUGFIX: when the user picks a new provider, pre-fill the
-        # Base URL field with that provider's default so the user
-        # doesn't have to know the URL off the top of their head. The
-        # field is still editable, so they can override for OpenRouter
-        # / Groq / NIM.
-        from sponsorscout.services.ai_rating import DEFAULT_BASE_URLS as _DEFAULT_URLS
-        def _on_provider_change(_evt=None):
-            p = self._provider_var.get().strip().lower()
-            default = _DEFAULT_URLS.get(p, "")
-            current = self._base_url_var.get().strip().rstrip("/")
-            known_defaults = {v.rstrip("/") for v in _DEFAULT_URLS.values() if v}
-            if default and (not current or current in known_defaults):
-                self._base_url_var.set(default)
-            self._render_model_chips()
-        prov_combo.bind("<<ComboboxSelected>>", _on_provider_change)
-        # Also auto-fill on initial load if the field is empty.
-        if not self._base_url_var.get().strip():
-            self._base_url_var.set(_DEFAULT_URLS.get(load_provider(), ""))
-        tk.Label(prov_row, text="Model:", font=("Helvetica", 9),
-                 fg="#1d2d44", bg="#ffffff").pack(side="left")
-        self._model_var = tk.StringVar(value=load_model())
-        ttk.Entry(prov_row, textvariable=self._model_var, width=32
-                  ).pack(side="left", padx=(6, 8))
-        ttk.Button(prov_row, text="Save",
-                   command=self._save_ai_provider_settings).pack(side="left")
-        tk.Label(prov_row,
-                 text="  (type any model name; chips are provider-specific)",
-                 font=("Helvetica", 8, "italic"), fg="#888",
-                 bg="#ffffff").pack(side="left")
-
-        # Base URL row (for OpenAI-compat providers you may need to override)
-        url_row = tk.Frame(ai, bg="#ffffff"); url_row.pack(fill="x", pady=(0, 6))
-        tk.Label(url_row, text="Base URL:", font=("Helvetica", 9),
-                 fg="#1d2d44", bg="#ffffff").pack(side="left")
-        ttk.Entry(url_row, textvariable=self._base_url_var, width=64
-                  ).pack(side="left", padx=(6, 8))
-        tk.Label(url_row,
-                 text="  (auto-filled for built-in providers; required for custom)",
-                 font=("Helvetica", 8, "italic"), fg="#888",
-                 bg="#ffffff").pack(side="left")
-
-        # Suggestion chips (clickable, just for convenience)
-        self._model_chip_frame = tk.Frame(ai, bg="#ffffff")
-        self._model_chip_frame.pack(fill="x", pady=(0, 6))
-        self._render_model_chips()
+        # ── AI Prompts ────────────────────────────────────────────────────
+        ai = section("AI Prompts",
+                     "Prompts used by the 🤖 AI Assistant tab for job rating, "
+                     "eligibility (uses your CV from AI Tailor tab), and document generation.")
 
         tk.Label(ai, text="Job Rating & Eligibility Prompt  (AI uses this + your CV to score each job):",
                  font=("Helvetica", 9), bg="#ffffff",
@@ -1611,7 +1645,7 @@ class SponsorScoutApp(tk.Tk):
 
         # ── Company Discovery ─────────────────────────────────────────────
         cd = section("Company Discovery",
-                     "Probes 210 curated ATS boards. "
+                     "Probes official career pages first, then ATS boards for matching companies. "
                      "Use role keywords: 'analyst', 'engineer', 'backend', 'data'.")
         dr = tk.Frame(cd, bg="#ffffff"); dr.pack(fill="x", pady=(0, 6))
         self.disc_q = tk.StringVar(value="software engineer")
@@ -1649,109 +1683,7 @@ class SponsorScoutApp(tk.Tk):
                  font=("Helvetica", 9), fg="#888",
                  bg="#ffffff").pack(anchor="w", pady=(4, 0))
 
-    # ── AI Settings actions ───────────────────────────────────────────────────
-
-    def _render_model_chips(self):
-        if not hasattr(self, "_model_chip_frame"):
-            return
-        for child in self._model_chip_frame.winfo_children():
-            child.destroy()
-
-        provider = self._provider_var.get().strip().lower() if hasattr(self, "_provider_var") else ""
-        models = SUGGESTED_MODELS_BY_PROVIDER.get(provider, [])
-        tk.Label(
-            self._model_chip_frame,
-            text=f"{provider or 'provider'} models:",
-            font=("Helvetica", 8, "italic"),
-            fg="#666",
-            bg="#ffffff",
-        ).pack(side="left", padx=(0, 4))
-
-        if not models:
-            tk.Label(
-                self._model_chip_frame,
-                text="type the exact model ID from your provider",
-                font=("Helvetica", 8, "italic"),
-                fg="#888",
-                bg="#ffffff",
-            ).pack(side="left")
-            return
-
-        for model in models[:6]:
-            ttk.Button(
-                self._model_chip_frame,
-                text=model,
-                width=0,
-                command=lambda name=model: self._model_var.set(name),
-            ).pack(side="left", padx=2)
-
-    def _save_api_key(self):
-        key = self._api_key_var.get().strip()
-        save_api_key(key)
-        messagebox.showinfo("Saved", "AI API key saved.")
-
-    def _save_ai_provider_settings(self):
-        """Persist the user's provider, model name, and base URL.
-
-        The user can type ANY model name from ANY provider — we don't
-        validate against a hard-coded list. We do validate that:
-          - provider is one of the built-in provider keys or 'custom'
-          - the model name is non-empty
-          - for 'custom' a base URL is provided (Gemini and OpenAI
-            have provider defaults so an empty base URL is fine).
-
-        BUGFIX: previous version required the base URL even for Gemini
-        and OpenAI, which the user could not provide (the Google
-        generative-language API has no separate base URL exposed in the
-        Google AI Studio UI). We now auto-fill the provider default when
-        the field is empty, and persist the user's explicit value when
-        they DO type one (e.g. for OpenRouter / Groq / NIM).
-        """
-        from sponsorscout.services.ai_rating import DEFAULT_BASE_URLS
-        provider = self._provider_var.get().strip().lower()
-        model    = self._model_var.get().strip()
-        base_url = self._base_url_var.get().strip()
-        valid_providers = set(DEFAULT_BASE_URLS)
-        if provider not in valid_providers:
-            messagebox.showwarning(
-                "Unknown provider",
-                f"Provider must be one of: {', '.join(sorted(valid_providers))}. Got '{provider}'.")
-            return
-        if not model:
-            messagebox.showwarning("Missing model", "Type a model name first.")
-            return
-        # BUGFIX: previous version insisted on a non-empty base URL for
-        # 'openai' too, which is wrong — the OpenAI SDK ships with a
-        # sensible default of https://api.openai.com/v1 that we encode
-        # in DEFAULT_BASE_URLS. We now auto-fill from the provider
-        # default when the user leaves the field blank, AND we
-        # pre-populate the field on provider change so the user can see
-        # what default we'd use.
-        if not base_url:
-            base_url = DEFAULT_BASE_URLS.get(provider, "")
-        if provider == "custom" and not base_url:
-            messagebox.showwarning(
-                "Missing base URL",
-                f"Provider 'custom' needs a Base URL. "
-                "Examples:\n"
-                "  OpenAI     -> https://api.openai.com/v1/chat/completions\n"
-                "  OpenRouter -> https://openrouter.ai/api/v1/chat/completions\n"
-                "  Groq       -> https://api.groq.com/openai/v1/chat/completions\n"
-                "  NIM        -> https://integrate.api.nvidia.com/v1/chat/completions\n"
-                "  Ollama     -> http://localhost:11434/v1/chat/completions")
-            return
-        # Reflect the resolved base URL back into the field so the user
-        # can see what was actually saved (and tweak it if they want).
-        self._base_url_var.set(base_url)
-        save_provider(provider)
-        save_model(model)
-        save_base_url(base_url)
-        messagebox.showinfo(
-            "Saved",
-            f"Provider: {provider}\n"
-            f"Model:    {model}\n"
-            f"Base URL: {base_url or '(provider default)'}\n\n"
-            "These will be used for all AI features from now on.")
+    # ── AI prompt actions ──────────────────────────────────────────────────────
 
     def _save_prompt(self):
         text = self._prompt_text.get("1.0", "end").strip()
@@ -1803,7 +1735,7 @@ class SponsorScoutApp(tk.Tk):
             sort_by_map = {
                 "Best match": "best",
                 "Latest": "latest",
-                "Sponsored": "sponsorship",
+                "Sponsored Only": "sponsorship",
             }
             sort_by = sort_by_map.get(self.sort_var.get(), "best")
             rows = search_jobs(
@@ -1819,6 +1751,7 @@ class SponsorScoutApp(tk.Tk):
                 relocation_only=self.reloc_var.get(),
                 experience_filter=experience_filter,
                 sort_by=sort_by,
+                objective=normalize_objective(self.objective_var.get()),
             )
         except Exception as exc:
             messagebox.showerror("Search error", str(exc))
@@ -1993,25 +1926,7 @@ class SponsorScoutApp(tk.Tk):
     def _run_scan_now(self):
         self.scan_status.set("running…")
         self.status_var.set("Scanning…")
-        # FIX-3b: route progress messages to the scan log widget in
-        # ADDITION to the status bar, without overwriting the original
-        # callback. `set_on_progress` chains the new callback to the
-        # existing one, so subsequent scans still update the status bar
-        # (previous bug: the original callback was permanently replaced,
-        # so after one scan, the status bar went silent).
-        def _progress_with_log(msg):
-            self.after(0, lambda m=msg: self._append_scan_log(m))
-
-        self._scanner.set_on_progress(_progress_with_log)
         self._scanner.run_now()
-
-    def _start_auto_scan(self):
-        self._scanner.start()
-        self.scan_status.set("auto — every 1 h")
-
-    def _stop_auto_scan(self):
-        self._scanner.stop()
-        self.scan_status.set("stopped")
 
     def _run_dedup(self):
         try:

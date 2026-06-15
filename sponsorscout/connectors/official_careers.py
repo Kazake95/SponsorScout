@@ -19,22 +19,38 @@ class OfficialCareersConnector(BaseConnector):
         careers_url = company.get("careers_url", "").rstrip("/")
         if not careers_url:
             return []
-        # BUGFIX: use the context manager so the connection pool is
-        # closed when the function returns. build_session() leaked one
-        # open Session per call (dozens leaked after a full scan).
+        # Use the context manager so the connection pool is
+        # closed when the function returns.
         with http_session() as session:
             company_name = company.get("name", "")
             hq_country   = company.get("country", "")
+            # Determine if this is a verified URL (when classed directly from CSV)
+            expected_ats = company.get("ats_type", "").lower()
+            is_verified = (expected_ats == "official_careers")
             try:
-                portal_jobs, _ats_links = crawl_official_careers(
+                portal_jobs, ats_links = crawl_official_careers(
                     session,
                     careers_url,
                     max_pages=10,
                     limit=300,
+                    is_verified=is_verified,
                 )
+                # Log detected ATS links for debugging
+                if ats_links:
+                    logger.debug(
+                        "Official careers for %s found ATS links: %s",
+                        company_name, ats_links[:3],
+                    )
             except Exception as exc:
-                logger.exception("Connector %s error", self.ats_name)
+                logger.exception("Connector %s error for %s", self.ats_name, company_name)
                 return []
+
+            if not portal_jobs:
+                logger.warning(
+                    "Official careers for %s returned 0 jobs from %s "
+                    "(possible bot-blocked or JS-rendered page)",
+                    company_name, careers_url,
+                )
 
             return [
                 {

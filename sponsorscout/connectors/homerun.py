@@ -66,7 +66,8 @@ class HomerunConnector(BaseConnector):
                             return jobs
                 except Exception as exc:
                     logger.exception("Connector %s error", self.ats_name)
-                    pass
+                    # Fall through: scanner._scan_company turns the empty return
+                    # into an ats_health record_failure() call.
 
             # Fallback: HTML scrape
             try:

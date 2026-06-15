@@ -1,8 +1,10 @@
 from __future__ import annotations
 import logging
+import random
 import time
 import concurrent.futures
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sponsorscout.connectors import get_connector
 from sponsorscout.core.normalizer import normalize_job
@@ -16,11 +18,25 @@ from sponsorscout.services.source_policy import classify_source
 from sponsorscout.models.job import Job
 from sponsorscout.services.ats_health import record_success, record_failure
 
+from sponsorscout.core.portal_search import crawl_official_careers
+from sponsorscout.core.ats_detection import detect_ats_from_links
+from sponsorscout.core.http_client import http_session
+
 logger = logging.getLogger(__name__)
 
 # Rate limiting: max concurrent requests per ATS
 MAX_WORKERS = 4
-REQUEST_DELAY = 0.3  # seconds between requests per company
+
+# Adaptive delay between companies (seconds)
+# Base range — randomized slightly to appear more human-like
+REQUEST_DELAY_MIN = 0.8
+REQUEST_DELAY_MAX = 1.5
+
+# Per-domain cooldown tracking — prevents hitting the same domain too fast
+# Key: domain (e.g., "boards.greenhouse.io"), Value: last access timestamp
+_domain_cooldowns: dict[str, float] = {}
+DOMAIN_COOLDOWN_SECONDS = 3.0  # minimum seconds between requests to same domain
+DOMAIN_BLOCK_BACKOFF = 5.0  # additional delay if domain was recently blocked
 
 
 def _existing_active_urls(conn, company_name: str, ats_source: str) -> set[str]:
@@ -40,6 +56,11 @@ def _build_job_record(raw, company, connector_name):
         connector_name,
         fallback_company=company.get("name", ""),
     )
+    # Build the typed dataclass first, then enrich with computed fields.
+    # Using ``Job(...)`` directly (instead of raw dict) keeps all scoring
+    # fields declared in models/job.py - adding a column to the DB requires
+    # only adding one dataclass field rather than chasing scattered dict
+    # assignments across the scanner pipeline.
     job = Job(
         external_id=normalized["external_id"],
         title=normalized["title"],
@@ -54,7 +75,7 @@ def _build_job_record(raw, company, connector_name):
     )
     text_for_analysis = (job.title or "") + " " + (job.description or "")
     spons_details = detect_sponsorship_keywords(text_for_analysis)
-    record = job.__dict__.copy()
+    record = job.to_record()
     record["sponsorship_score"] = sponsorship_score(text_for_analysis)
     record["match_score"] = score_job(job, DEFAULT_PROFILE)
     record["remote_type"] = spons_details.get("remote_type", "onsite")
@@ -64,93 +85,213 @@ def _build_job_record(raw, company, connector_name):
     return record
 
 
+
 def _scan_company(company, db_path=DB_PATH, on_progress=None):
     """Scan a single company. Returns list of job records.
 
-    B10 fix: previous version called record_success() after the HTTP fetch
-    succeeded, even if every per-job normalization failed. Now we track
-    per-job failures and only record a true success when at least one job
-    made it through cleanly.
-
-    BUGFIX (2024-Q4): previous version called `time.sleep(REQUEST_DELAY)`
-    only on the success path, so an exception in `fetch_jobs()` skipped the
-    rate-limit delay and let the next company hammer the ATS API immediately.
-    We now wrap the whole body in try/finally so the sleep is unconditional
-    and we don't get throttled (or banned) by the upstream ATS when one
-    company errors out.
-
-    BUGFIX (2024-Q4): `conn.close()` is also moved into the finally block so
-    that the connection is released even when `record_failure()` itself
-    raises (e.g. DB is locked for so long the busy_timeout fires).
+    Official career-page jobs are harvested first. If the company also
+    exposes a detectable ATS or has a known ATS, that ATS is scanned next
+    and any additional jobs are merged in.
     """
-    connector = get_connector(company.get("ats_type"))
-    if connector is None:
+    expected_ats = company.get("ats_type", "unknown")
+    careers_url = company.get("careers_url", "").rstrip("/")
+
+    detected_ats = ""
+    detected_token = ""
+    official_jobs = []
+
+    # 1. Career Page First: Probe for ATS links and collect HTML jobs.
+    # CSV careers_url is the user's hand-vetted source of truth; we always
+    # scrape it first regardless of expected_ats. A successful scrape means
+    # the official page won and we can skip the connector entirely.
+    company_name = company.get("name", "unknown")
+    if careers_url:
+        with http_session() as session:
+            try:
+                portal_jobs, ats_links = crawl_official_careers(
+                    session,
+                    careers_url,
+                    max_pages=8,
+                    limit=300,
+                    is_verified=(expected_ats == "official_careers"),
+                )
+                official_jobs = portal_jobs
+                detected_ats, detected_token = detect_ats_from_links(ats_links)
+                if official_jobs:
+                    logger.info(
+                        "Career page scrape for %s: %d jobs from %s",
+                        company_name, len(official_jobs), careers_url,
+                    )
+                else:
+                    logger.warning(
+                        "Career page scrape for %s returned 0 jobs from %s "
+                        "(will try connector as fallback)",
+                        company_name, careers_url,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Career page probe failed for %s (%s): %s",
+                    company_name, careers_url, exc,
+                )
+
+    # 2. Decide which ATS to use as fallback when careers scrape was empty.
+    # Priority: detected ATS (from links on the careers page) > expected ATS
+    # (from CSV) > official_careers (re-scrape the URL via connector).
+    if detected_ats:
+        ats_to_use = detected_ats
+        company["ats_board_token"] = detected_token
+        if expected_ats and detected_ats != expected_ats:
+            logger.info(
+                "ATS mismatch for %s: expected %s but detected %s",
+                company.get("name"), expected_ats, detected_ats
+            )
+    elif expected_ats and expected_ats != "official_careers" and expected_ats != "unknown":
+        ats_to_use = expected_ats
+    else:
+        # Re-scrape via the connector - makes sure CSV careers_url gets
+        # exercised with full Playwright fallback even if the first pass
+        # returned 0 (which usually means JS-rendering was unavailable).
+        ats_to_use = "official_careers"
+
+    company["ats_type"] = ats_to_use
+    connector = get_connector(ats_to_use)
+    if connector is None and not official_jobs:
         return []
 
     conn = get_connection(db_path)
     save_company(conn, company)
-    ats_name = company.get("ats_type", "unknown")
+    ats_name = ats_to_use
     start = time.perf_counter()
-    seen_urls = set()
     found = []
     per_job_errors = 0
+    global_seen_urls: set[str] = set()
 
-    try:
-        try:
-            raw_jobs = connector.fetch_jobs(company)
-        except Exception as exc:
-            logger.exception(
-                "Connector fetch_jobs failed for %s (%s)",
-                company.get("name", "unknown"),
-                ats_name,
-            )
-            elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
-            record_failure(conn, ats_name, elapsed_ms)
-            return found
-
-        elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
-
+    def _persist_jobs(raw_jobs, source_name: str):
+        nonlocal per_job_errors
+        source_seen_urls: set[str] = set()
+        source_found = []
         for raw in raw_jobs:
             try:
-                record = _build_job_record(raw, company, ats_name)
+                record = _build_job_record(raw, company, source_name)
+                if record["url"] in global_seen_urls:
+                    continue
                 upsert_job(conn, record)
-                seen_urls.add(record["url"])
+                global_seen_urls.add(record["url"])
+                source_seen_urls.add(record["url"])
                 found.append(record)
+                source_found.append(record)
             except Exception as exc:
                 logger.exception(
                     "Failed to normalize or persist job for %s: %s",
                     company.get("name", "unknown"),
                     exc,
                 )
-                # B10: count but don't swallow silently. We surface the
-                # failure count via the health metric below.
                 per_job_errors += 1
 
-        # Expire jobs no longer listed
-        for active_url in _existing_active_urls(conn, company["name"], ats_name):
-            if active_url not in seen_urls:
+        # Expire rows for this specific source only.
+        for active_url in _existing_active_urls(conn, company["name"], source_name):
+            if active_url not in source_seen_urls:
                 mark_job_expired(conn, active_url)
 
-        # B10 fix: only credit a "success" if the fetch returned jobs AND
-        # most of them normalized cleanly. If 100% of jobs errored, the ATS
-        # response is broken — record a failure instead.
-        total = len(raw_jobs)
-        if total == 0 or per_job_errors >= total:
-            record_failure(conn, ats_name, elapsed_ms)
-        else:
-            # Record success for the HTTP fetch; partial-failure case is
-            # still a success for the connector-level health metric.
+        return source_found
+
+    try:
+        # 3. Persist official-careers jobs first.
+        if official_jobs:
+            official_raw_jobs = []
+            for job in official_jobs:
+                title = (job.title or "").strip()
+                if not title or len(title) < 3:
+                    continue
+                official_raw_jobs.append(
+                    {
+                        "external_id": job.url,
+                        "title": title,
+                        "company": company.get("name", ""),
+                        "country": company.get("country", ""),
+                        "location": job.location,
+                        "url": job.url,
+                        "description": job.description or title,
+                        "ats_source": "official_careers",
+                    }
+                )
+            _persist_jobs(official_raw_jobs, "official_careers")
+
+        # 4. Then scan the ATS board if the company has one.
+        raw_jobs = []
+        if ats_to_use != "official_careers" and connector is not None:
+            try:
+                raw_jobs = connector.fetch_jobs(company)
+            except Exception as exc:
+                logger.exception(
+                    "Connector fetch_jobs failed for %s (%s)",
+                    company.get("name", "unknown"),
+                    ats_name,
+                )
+                raw_jobs = []
+
+            if raw_jobs:
+                # Use the ATS jobs as an additional source, after official jobs.
+                _persist_jobs(raw_jobs, ats_name)
+            elif not official_jobs:
+                # No official jobs and no ATS jobs: expire any previously active
+                # rows for this source before recording the failure.
+                for active_url in _existing_active_urls(conn, company["name"], ats_name):
+                    mark_job_expired(conn, active_url)
+                elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
+                record_failure(conn, ats_name, elapsed_ms)
+                if expected_ats and expected_ats != ats_name and expected_ats != "unknown":
+                    record_failure(conn, expected_ats, elapsed_ms)
+                return found
+
+        elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
+
+        # Health bookkeeping. Official-careers success is only relevant if we
+        # actually found jobs on the company portal.
+        if official_jobs:
+            record_success(conn, "official_careers", elapsed_ms)
+
+        if raw_jobs:
             record_success(conn, ats_name, elapsed_ms)
+            if expected_ats and expected_ats != ats_name and expected_ats != "unknown":
+                record_failure(conn, expected_ats, elapsed_ms)
+        elif not official_jobs:
+            record_failure(conn, ats_name, elapsed_ms)
+            if expected_ats and expected_ats != ats_name and expected_ats != "unknown":
+                record_failure(conn, expected_ats, elapsed_ms)
+
+        # If the company only has official jobs, return them now.
+        return found
     finally:
         try:
             conn.close()
         except Exception:
             pass
-        # Rate-limit every company uniformly so a single ATS error
-        # doesn't cascade into a burst of requests on the next call.
-        time.sleep(REQUEST_DELAY)
-    return found
-
+        # Adaptive delay between companies to avoid rate limiting
+        delay = random.uniform(REQUEST_DELAY_MIN, REQUEST_DELAY_MAX)
+        
+        # Apply per-domain cooldown: extract domain from careers_url and enforce
+        # minimum gap between hits to the same domain.
+        careers_domain = ""
+        if careers_url:
+            try:
+                parsed = urlparse(careers_url)
+                careers_domain = parsed.netloc.lower()
+            except Exception:
+                pass
+        
+        if careers_domain:
+            now = time.time()
+            last_access = _domain_cooldowns.get(careers_domain, 0.0)
+            gap = now - last_access
+            if gap < DOMAIN_COOLDOWN_SECONDS:
+                # Need to wait longer to respect the cooldown
+                extra_wait = DOMAIN_COOLDOWN_SECONDS - gap + random.uniform(0.1, 0.5)
+                delay = max(delay, extra_wait)
+            _domain_cooldowns[careers_domain] = time.time()
+        
+        time.sleep(delay)
+    
 
 def scan_all(companies, discovery_items=None, db_path=DB_PATH, parallel=False, on_progress=None):
     """

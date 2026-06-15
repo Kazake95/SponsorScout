@@ -1,0 +1,7 @@
+my_venv/
+docs/
+tests/
+*.spec
+cleanup.txt
+LICENSE*
+.gitignore

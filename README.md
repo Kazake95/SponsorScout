@@ -178,7 +178,7 @@ sponsorscout/
 │   └── job.py         # Job dataclass
 │
 ├── services/
-│   ├── background_scanner.py  # Daemon thread scanner with pause/resume
+│   ├── scan_coordinator.py   # Foreground scan coordinator (one-shot worker thread)
 │   ├── ats_health.py          # Record success/failure per ATS connector
 │   ├── browser_fetcher.py     # Lightweight HTTP page fetcher (no browser needed)
 │   ├── country_config.py      # Ordered country list from profile JSON
@@ -246,6 +246,20 @@ Match scores update on the next scan.
 The `official_careers` fallback is intentionally broad so it does not miss relevant EU roles hidden behind custom company portals. It extracts likely job cards, skips social/legal/noise links, and applies the same remote/sponsorship keyword logic used by the main search filters.
 
 ---
+
+
+## Search objectives
+
+The Search tab includes objective presets to keep results narrow and high-signal:
+
+- Balanced
+- Strict quality
+- Visa sponsor
+- Local EU
+- Remote EMEA
+- Blue Card focus
+
+These presets tighten the same backend dataset rather than deleting records, so you can keep one shared database and switch between job-search goals as needed.
 
 ## Discovery and filters
 

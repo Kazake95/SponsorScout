@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     remote_type TEXT DEFAULT 'onsite',
     eu_blue_card INTEGER DEFAULT 0,
     has_relocation INTEGER DEFAULT 0,
-    -- BUGFIX: added in v0.4.2 to support the new "Experience" filter
+    -- BUGFIX: added in v0.1.1 to support the new "Experience" filter
     -- (intern / entry / mid / senior / lead / exec). Derived by the
     -- normalizer at scan time from the job title; stored as a TEXT
     -- because experience-level is a soft enum (the model never changes)

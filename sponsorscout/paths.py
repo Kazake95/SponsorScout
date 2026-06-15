@@ -18,6 +18,45 @@ def _get_frozen_base_dir() -> Path | None:
     return None
 
 
+def _configure_bundled_playwright_browsers_path() -> None:
+    """If running as a frozen build with a bundled ``_playwright`` directory
+    next to the executable, point Playwright at it.
+
+    Both ``build_exe.ps1`` and ``build_deb.sh`` bundle Chromium into a
+    ``_playwright`` folder alongside the executable so JS-rendered career
+    pages work without a separate ``playwright install`` step. The Linux
+    .deb wraps the binary in a launcher script that exports
+    ``PLAYWRIGHT_BROWSERS_PATH`` directly, so it's always correct there.
+
+    On Windows, ``installer.iss`` instead writes ``PLAYWRIGHT_BROWSERS_PATH``
+    to ``HKCU\\Environment``. That registry change does **not** propagate to
+    the app launched immediately after install via Inno's ``[Run]`` section
+    (new environment variables only reach processes started by a shell that
+    re-reads ``HKCU\\Environment``, e.g. after the next login) — so the very
+    first run after installing would have Playwright look in its default
+    cache location, find nothing, and every SPA career portal would return 0
+    jobs again.
+
+    Setting it here, from the app's own code, makes the bundled Chromium
+    discoverable on the first launch regardless of registry propagation
+    timing, while still honoring an explicitly-set environment variable if
+    the user has configured one themselves.
+    """
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return  # respect an explicit override
+
+    if not getattr(sys, "frozen", False):
+        return  # only relevant for packaged builds
+
+    exe_dir = Path(sys.executable).resolve().parent
+    candidate = exe_dir / "_playwright"
+    if candidate.is_dir():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
+
+
+_configure_bundled_playwright_browsers_path()
+
+
 def _get_windows_appdata_dir(app_name: str) -> Path:
     """Return the *per-user* application data directory on Windows."""
     # Use GetKnownFolderPath via ctypes (modern, reliable, works on all
@@ -56,7 +95,7 @@ def _get_windows_appdata_dir(app_name: str) -> Path:
     env_path = os.environ.get("APPDATA")
     if env_path:
         return Path(env_path) / app_name
-    return Path.home() / "." + app_name.lower()
+    return Path.home() / f".{app_name.lower()}"
 
 
 def get_user_data_dir() -> Path:

@@ -37,7 +37,7 @@ TITLE_NOISE = re.compile(
     re.IGNORECASE,
 )
 
-# Experience-level detection (v0.4.2 feature).
+# Experience-level detection (v0.1.1 feature).
 # We use simple keyword matching on the job title because that's where
 # EU/global ATS boards tend to encode seniority (the description is
 # usually more verbose / multi-lingual and harder to grep).
@@ -46,7 +46,7 @@ TITLE_NOISE = re.compile(
 # Engineer" is a thing, and we check EXEC last because "Chief" almost
 # never appears in regular titles but is unambiguous when it does.
 _EXPERIENCE_PATTERNS = [
-    # ── BUGFIX (v0.4.2) ────────────────────────────────────────
+    # ── BUGFIX (v0.1.1) ────────────────────────────────────────
     # BUGFIX: previous version was missing this whole block, so all
     # jobs normalised to '' and the Search tab's Experience filter had
     # nothing to match against. Now every normalised job gets one of

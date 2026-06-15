@@ -71,7 +71,8 @@ class ManatalConnector(BaseConnector):
                                 return jobs
                     except Exception as exc:
                         logger.exception("Connector %s error", self.ats_name)
-                        pass
+                        # Fall through: scanner._scan_company turns the empty return
+                        # into an ats_health record_failure() call.
                 # Fallback: link scrape
                 return parse_links_from_html(html, careers_url, company["name"])
             except Exception as exc:

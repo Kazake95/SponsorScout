@@ -2,3 +2,9 @@ requests>=2.31.0,<3.0.0
 beautifulsoup4>=4.12.0,<5.0.0
 lxml>=4.9.0,<6.0.0
 Pillow>=10.0.0,<11.0.0
+playwright>=1.40.0,<2.0.0
+pytest>=7.0.0
+pyinstaller>=6.0.0
+#innosetup.exe & python.exe for windows build
+#AI Assistant tab opens AI chat sites in the user's default browser via the
+#stdlib 'webbrowser' module -- no extra runtime dependencies needed.

@@ -32,6 +32,7 @@ need dpkg-deb
 
 python3 -m pip install --upgrade pip >/dev/null
 python3 -m pip install -r requirements.txt pyinstaller >/dev/null
+python3 -m playwright install chromium >/dev/null || true
 python3 -m pytest -q
 
 rm -rf "$BUILD_DIR" "$DIST_DIR"
@@ -45,9 +46,27 @@ python3 -m PyInstaller \
   --name "$APP_NAME" \
   --collect-data sponsorscout \
   --collect-submodules sponsorscout \
+  --collect-submodules playwright \
   sponsorscout/main.py
 
 cp -a "dist/$APP_NAME/"* "$APP_DIR/"
+
+# Bundle Playwright's Chromium so JS-rendered career pages work out of the box.
+# Without this, the installed app gets 0 jobs from all SPA career portals
+# because Playwright can't find the browser binary.
+PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${HOME}/.cache/ms-playwright}"
+if [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
+  CHROMIUM_DIR=$(find "$PLAYWRIGHT_BROWSERS_PATH" -maxdepth 1 -name "chromium*" -type d | head -1)
+  if [ -n "$CHROMIUM_DIR" ]; then
+    mkdir -p "$APP_DIR/_playwright"
+    cp -a "$CHROMIUM_DIR" "$APP_DIR/_playwright/"
+    echo "Bundled Chromium from $CHROMIUM_DIR"
+  else
+    echo "WARNING: No Chromium directory found in $PLAYWRIGHT_BROWSERS_PATH" >&2
+  fi
+else
+  echo "WARNING: Playwright browsers cache not found at $PLAYWRIGHT_BROWSERS_PATH" >&2
+fi
 
 mkdir -p "$BUILD_DIR/usr/bin"
 cat > "$BUILD_DIR/usr/bin/sponsorscout" <<'EOL'
@@ -58,6 +77,9 @@ cat > "$BUILD_DIR/usr/bin/sponsorscout" <<'EOL'
 # the binary lives at /opt/sponsorscout/SponsorScout (not nested in another
 # SponsorScout/ dir). Previous version pointed at
 # /opt/sponsorscout/SponsorScout/SponsorScout which did not exist.
+# Point Playwright at the bundled Chromium binary so JS-rendered
+# career pages work on the installed system without a separate install step.
+export PLAYWRIGHT_BROWSERS_PATH=/opt/sponsorscout/_playwright
 exec /opt/sponsorscout/SponsorScout "$@"
 EOL
 chmod 755 "$BUILD_DIR/usr/bin/sponsorscout"

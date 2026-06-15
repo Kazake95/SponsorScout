@@ -90,32 +90,43 @@ def test_normalize_job_requires_company():
         normalize_job(raw, "verified", "greenhouse")
 
 
-def test_rate_job_parses_markdown_json(monkeypatch):
-    monkeypatch.setattr(ai_rating, "_call_ai", lambda *args, **kwargs: 
-        "```json\n{\"rating\": 8, \"verdict\": \"Good fit\", \"pros\": [\"Visa support\"], \"cons\": [\"Some travel required\"]}\n```"
-    )
-    result = ai_rating.rate_job(
-        title="Software Engineer",
-        company="Acme",
-        country="Germany",
-        description="Great role",
-        sponsorship_score=80,
-        remote_type="remote_eu",
-        eu_blue_card=True,
-        has_relocation=False,
-        api_key="test-key",
-    )
+def test_parse_rating_result_markdown_json():
+    pasted = "```json\n{\"rating\": 8, \"verdict\": \"Good fit\", \"pros\": [\"Visa support\"], \"cons\": [\"Some travel required\"]}\n```"
+    result = ai_rating.parse_rating_result(pasted)
     assert result.get("error") is None
     assert result["rating"] == 8
     assert result["verdict"] == "Good fit"
     assert result["pros"] == ["Visa support"]
 
 
-def test_rate_job_parses_single_quote_json(monkeypatch):
-    monkeypatch.setattr(ai_rating, "_call_ai", lambda *args, **kwargs: 
-        "```json\n{'rating': 7, 'verdict': 'Strong fit', 'pros': ['Visa support'], 'cons': ['Some travel required']}\n```"
-    )
-    result = ai_rating.rate_job(
+def test_parse_rating_result_single_quote_json():
+    pasted = "```json\n{'rating': 7, 'verdict': 'Strong fit', 'pros': ['Visa support'], 'cons': ['Some travel required']}\n```"
+    result = ai_rating.parse_rating_result(pasted)
+    assert result.get("error") is None
+    assert result["rating"] == 7
+    assert result["verdict"] == "Strong fit"
+    assert result["pros"] == ["Visa support"]
+
+
+def test_parse_rating_result_empty_paste():
+    result = ai_rating.parse_rating_result("")
+    assert result.get("error")
+
+
+def test_parse_rating_result_unparseable_text():
+    result = ai_rating.parse_rating_result("Sorry, I can't help with that.")
+    assert result.get("error")
+
+
+def test_parse_text_result_strips_fences():
+    pasted = "```\nDear Hiring Manager,\n\nI am excited...\n```"
+    result = ai_rating.parse_text_result(pasted)
+    assert result["error"] is None
+    assert result["text"].startswith("Dear Hiring Manager")
+
+
+def test_build_rating_prompt_includes_job_context():
+    prompt = ai_rating.build_rating_prompt(
         title="Software Engineer",
         company="Acme",
         country="Germany",
@@ -124,51 +135,86 @@ def test_rate_job_parses_single_quote_json(monkeypatch):
         remote_type="remote_eu",
         eu_blue_card=True,
         has_relocation=False,
-        api_key="test-key",
     )
-    assert result.get("error") is None
-    assert result["rating"] == 7
-    assert result["verdict"] == "Strong fit"
-    assert result["pros"] == ["Visa support"]
+    assert "Software Engineer" in prompt
+    assert "Acme" in prompt
+    assert "Sponsorship Score: 80/100" in prompt
 
 
-def test_openai_compatible_base_url_does_not_duplicate_v1():
-    assert ai_rating._chat_completions_url("https://integrate.api.nvidia.com/v1") == (
-        "https://integrate.api.nvidia.com/v1/chat/completions"
+def test_build_cv_prompt_includes_cv_and_jd():
+    prompt = ai_rating.build_cv_prompt("My CV text", "The job description")
+    assert "My CV text" in prompt
+    assert "The job description" in prompt
+
+
+def test_build_cover_letter_prompt_includes_template():
+    prompt = ai_rating.build_cover_letter_prompt(
+        "My CV text", "The job description", base_letter="Dear Sir or Madam"
     )
-    assert ai_rating._chat_completions_url("https://api.groq.com/openai/v1") == (
-        "https://api.groq.com/openai/v1/chat/completions"
+    assert "Dear Sir or Madam" in prompt
+    assert "The job description" in prompt
+
+
+
+
+def test_build_rating_prompt_preserves_full_cv_and_description(monkeypatch):
+    long_cv = "CV_START_" + ("A" * 9000) + "_CV_END"
+    long_jd = "JD_START_" + ("B" * 9000) + "_JD_END"
+
+    monkeypatch.setattr(ai_rating, "load_cv", lambda: long_cv)
+
+    prompt = ai_rating.build_rating_prompt(
+        title="Software Engineer",
+        company="Acme",
+        country="Germany",
+        description=long_jd,
+        sponsorship_score=80,
+        remote_type="remote_eu",
+        eu_blue_card=True,
+        has_relocation=False,
+        custom_prompt="SYSTEM PROMPT",
     )
-    assert ai_rating._chat_completions_url("https://api.openai.com") == (
-        "https://api.openai.com/v1/chat/completions"
+
+    assert long_cv in prompt
+    assert long_jd in prompt
+
+
+def test_build_tailor_prompts_preserve_full_text():
+    long_cv = "CV_START_" + ("A" * 9000) + "_CV_END"
+    long_jd = "JD_START_" + ("B" * 9000) + "_JD_END"
+    long_letter = "LETTER_START_" + ("C" * 9000) + "_LETTER_END"
+
+    cv_prompt = ai_rating.build_cv_prompt(long_cv, long_jd, custom_prompt="SYSTEM PROMPT")
+    cl_prompt = ai_rating.build_cover_letter_prompt(
+        long_cv,
+        long_jd,
+        custom_prompt="SYSTEM PROMPT",
+        base_letter=long_letter,
     )
-    assert ai_rating._chat_completions_url(
-        "https://example.com/v1/chat/completions",
-        exact=True,
-    ) == "https://example.com/v1/chat/completions"
+
+    for blob in (long_cv, long_jd, long_letter):
+        assert blob in cv_prompt or blob in cl_prompt
 
 
-def test_nvidia_provider_is_supported(monkeypatch, tmp_path):
-    provider_file = tmp_path / "provider.txt"
-    monkeypatch.setattr(ai_rating, "PROVIDER_PATH", provider_file)
-    monkeypatch.delenv("SPONSORSCOUT_AI_PROVIDER", raising=False)
-    ai_rating.save_provider("nvidia")
-    assert ai_rating.load_provider() == "nvidia"
-    assert ai_rating.DEFAULT_BASE_URLS["nvidia"].endswith("/v1")
-    assert ai_rating.SUGGESTED_MODELS_BY_PROVIDER["nvidia"]
+def test_fetch_jd_from_url_preserves_full_text(monkeypatch):
+    import urllib.request
 
+    long_body = "JD_START_" + ("X" * 9000) + "_JD_END"
+    html = f"<html><body><div>{long_body}</div></body></html>".encode("utf-8")
 
-def test_ai_404_error_mentions_provider_model_mismatch():
-    msg = ai_rating._format_ai_http_error(
-        404,
-        "google/gemma-4-31b-it",
-        "nvidia",
-        "https://integrate.api.nvidia.com/v1/chat/completions",
-        "model not found",
-    )
-    assert "provider 'nvidia'" in msg
-    assert "model ID is not available" in msg
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+        def read(self):
+            return html
 
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    result = ai_rating.fetch_jd_from_url("https://example.com/jd")
+    assert result["error"] is None
+    assert long_body in result["text"]
 
 def test_normalize_job_uses_fallback_company():
     raw = {"title": "Data Analyst", "company": "", "country": "de",
@@ -464,3 +510,50 @@ def test_country_filter_excludes_remote_global(test_db):
     urls = [r["url"] for r in rows]
     assert "https://x.com/r" not in urls
     assert "https://x.com/local" in urls
+
+
+from sponsorscout.services.objectives import available_search_objective_labels, get_search_objective
+
+
+def test_search_objective_labels_include_quality_modes():
+    labels = available_search_objective_labels()
+    assert "Balanced" in labels
+    assert "Strict quality" in labels
+    assert "Visa sponsor" in labels
+    assert "Local EU" in labels
+    assert "Remote EMEA" in labels
+    assert "Blue Card focus" in labels
+
+
+def test_build_rating_prompt_includes_objective():
+    prompt = ai_rating.build_rating_prompt(
+        title="Data Analyst",
+        company="Acme",
+        country="Germany",
+        description="SQL Power BI",
+        sponsorship_score=80,
+        remote_type="remote_eu",
+        eu_blue_card=True,
+        has_relocation=False,
+        custom_prompt="SYSTEM PROMPT",
+        objective="Strict quality",
+    )
+    assert "Search objective: Strict quality" in prompt
+
+
+def test_strict_quality_objective_filters_low_fit_jobs(test_db):
+    _insert_job(test_db, "https://x.com/high", country="Germany", remote_type="onsite", sponsorship_score=80)
+    _insert_job(test_db, "https://x.com/low", country="United States", remote_type="remote_global", sponsorship_score=10)
+    rows = search_jobs(test_db, objective="Strict quality")
+    urls = [r["url"] for r in rows]
+    assert "https://x.com/high" in urls
+    assert "https://x.com/low" not in urls
+
+
+def test_blue_card_focus_objective_prefers_blue_card(test_db):
+    _insert_job(test_db, "https://x.com/blue", country="Germany", remote_type="onsite", eu_blue_card=1, sponsorship_score=35)
+    _insert_job(test_db, "https://x.com/other", country="Germany", remote_type="onsite", eu_blue_card=0, sponsorship_score=35)
+    rows = search_jobs(test_db, objective="Blue Card focus")
+    urls = [r["url"] for r in rows]
+    assert "https://x.com/blue" in urls
+    assert "https://x.com/other" not in urls

@@ -3,6 +3,15 @@ from datetime import datetime
 
 @dataclass
 class Job:
+    """Domain model for a single job listing.
+
+    Each field maps 1:1 to a column of the ``jobs`` table defined in
+    ``sponsorscout/db/schema.sql``. Adding a new column to the DB without
+    adding it here will silently keep flowing through as a dict key in
+    scanner code, which is exactly the inconsistency that
+    SponsorScout_Codebase_Analysis.md §3.4 / §5.6 warned about.
+    """
+
     external_id: str
     title: str
     company: str
@@ -19,6 +28,15 @@ class Job:
     match_score: int = 0
     verified_active: bool = True
     is_expired: bool = False
+    # Extended fields (added in v0.1.1 to support the new filtering UI).
+    remote_type: str = "onsite"
+    eu_blue_card: int = 0
+    has_relocation: int = 0
+    experience_level: str = ""
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
     last_verified_at: datetime | None = None
+
+    def to_record(self) -> dict:
+        """Return a flat dict ready for ``upsert_job`` / DB writes."""
+        return self.__dict__.copy()
