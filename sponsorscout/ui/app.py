@@ -33,6 +33,11 @@ from sponsorscout.services.ai_rating import (
     parse_rating_result, parse_text_result,
 )
 from sponsorscout.services.ai_webview import AIWebviewLauncher, AI_SITES, DEFAULT_SITE
+from sponsorscout.services.ai_config import (
+    load_config, save_config, reset_config,
+    AIConfig, PROVIDER_NAMES, PROVIDER_PRESETS,
+)
+from sponsorscout.services.ai_gateway import call_ai as ai_call, test_connection as ai_test_connection
 
 EXPERIENCE_OPTIONS = [
     "All",
@@ -230,6 +235,7 @@ class SponsorScoutApp(tk.Tk):
         self.tools_tab        = ttk.Frame(self.tabs)
         self.tailor_tab       = ttk.Frame(self.tabs)
         self.ai_assistant_tab = ttk.Frame(self.tabs)
+        self.ai_settings_tab  = ttk.Frame(self.tabs)
 
         self.tabs.add(self.search_tab,       text=_("Search"))
         self.tabs.add(self.dashboard_tab,    text=_("Dashboard"))
@@ -237,6 +243,7 @@ class SponsorScoutApp(tk.Tk):
         self.tabs.add(self.health_tab,       text=_("ATS Health"))
         self.tabs.add(self.tailor_tab,       text=_("✨ AI Tailor"))
         self.tabs.add(self.ai_assistant_tab, text=_("🤖 AI Assistant"))
+        self.tabs.add(self.ai_settings_tab,  text=_("⚙ AI Settings"))
         self.tabs.add(self.tools_tab,        text=_("Tools"))
         self.tabs.pack(fill="both", expand=True)
 
@@ -246,6 +253,7 @@ class SponsorScoutApp(tk.Tk):
         self._build_health_tab()
         self._build_tailor_tab()
         self._build_ai_assistant_tab()
+        self._build_ai_settings_tab()
         self._build_tools_tab()
 
     # ── Search tab ────────────────────────────────────────────────────────────
@@ -400,6 +408,10 @@ class SponsorScoutApp(tk.Tk):
             ai_hdr, text=f"📄 {_('Tailor CV & Letter')}",
             command=self._open_tailor_for_selected)
         self._ai_tailor_btn.pack(side="left", padx=4)
+        self._ai_rate_api_btn = ttk.Button(
+            ai_hdr, text=f"⚡ {_('Rate with API')}",
+            command=self._rate_job_with_api)
+        self._ai_rate_api_btn.pack(side="left", padx=4)
         self._ai_result_var = tk.StringVar(value=_("Select a job, click 'Copy Rating Prompt', paste it into the AI Assistant tab, then click 'Paste AI Result'."))
         self._ai_cv_hint_var = tk.StringVar(value="")
         tk.Label(ai_hdr, textvariable=self._ai_cv_hint_var,
@@ -916,7 +928,17 @@ class SponsorScoutApp(tk.Tk):
         self._open_ai_btn = ttk.Button(
             act_row, text="🤖 Open AI Assistant",
             command=lambda: self.tabs.select(self.ai_assistant_tab))
-        self._open_ai_btn.pack(side="left")
+        self._open_ai_btn.pack(side="left", padx=(0, 6))
+
+        act_row2 = tk.Frame(act_frame, bg="#ffffff"); act_row2.pack(fill="x", pady=(4, 0))
+        self._gen_cv_api_btn = ttk.Button(
+            act_row2, text="⚡ Generate CV with API",
+            command=lambda: self._generate_tailor_with_api("cv"))
+        self._gen_cv_api_btn.pack(side="left", padx=(0, 6))
+        self._gen_cl_api_btn = ttk.Button(
+            act_row2, text="⚡ Generate Cover Letter with API",
+            command=lambda: self._generate_tailor_with_api("cl"))
+        self._gen_cl_api_btn.pack(side="left")
 
         self._tailor_progress_var = tk.StringVar(value="")
         tk.Label(act_frame, textvariable=self._tailor_progress_var,
@@ -2030,6 +2052,359 @@ class SponsorScoutApp(tk.Tk):
                 self.after(0, lambda e=exc:
                            self.fresh_status.set(f"Error: {e}"))
                 self.after(0, lambda: self.status_var.set("Failed."))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+
+    # ── AI Settings tab ─────────────────────────────────────────────────────
+
+    def _build_ai_settings_tab(self):
+        """Build the AI Settings tab with provider, base URL, API key, model, timeout."""
+        outer = tk.Frame(self.ai_settings_tab, bg="#f0f2f5", padx=14, pady=12)
+        outer.pack(fill="both", expand=True)
+
+        hdr = tk.Frame(outer, bg="#f0f2f5")
+        hdr.pack(fill="x", pady=(0, 8))
+        tk.Label(hdr, text="⚙  AI API Settings",
+                 font=("Helvetica", 13, "bold"),
+                 fg="#1d2d44", bg="#f0f2f5").pack(side="left")
+        tk.Label(hdr,
+                 text="  ·  Configure your AI provider for direct API calls (⚡ buttons). "
+                      "The 🤖 AI Assistant copy-paste workflow needs no configuration.",
+                 font=("Helvetica", 9), fg="#8fa8c8",
+                 bg="#f0f2f5").pack(side="left")
+
+        # Load saved config
+        self._ai_cfg = load_config()
+
+        # ── Provider section ─────────────────────────────────────────────
+        pf = tk.LabelFrame(outer, text="  Provider  ",
+                           bg="#ffffff", font=("Helvetica", 10, "bold"),
+                           fg="#1d2d44", relief="groove", bd=1, padx=12, pady=10)
+        pf.pack(fill="x", pady=(0, 10))
+
+        row1 = tk.Frame(pf, bg="#ffffff"); row1.pack(fill="x", pady=(0, 6))
+        tk.Label(row1, text="Provider:", font=("Helvetica", 9),
+                 bg="#ffffff", width=14, anchor="w").pack(side="left")
+        self._cfg_provider_var = tk.StringVar(value=self._ai_cfg.provider)
+        provider_combo = ttk.Combobox(
+            row1, textvariable=self._cfg_provider_var,
+            values=PROVIDER_NAMES, width=30, state="readonly")
+        provider_combo.pack(side="left", padx=(0, 10))
+        provider_combo.bind("<<ComboboxSelected>>", self._on_provider_change)
+
+        row2 = tk.Frame(pf, bg="#ffffff"); row2.pack(fill="x", pady=(0, 6))
+        tk.Label(row2, text="Base URL:", font=("Helvetica", 9),
+                 bg="#ffffff", width=14, anchor="w").pack(side="left")
+        self._cfg_base_url_var = tk.StringVar(value=self._ai_cfg.base_url)
+        ttk.Entry(row2, textvariable=self._cfg_base_url_var,
+                  width=60).pack(side="left")
+
+        row3 = tk.Frame(pf, bg="#ffffff"); row3.pack(fill="x", pady=(0, 6))
+        tk.Label(row3, text="API Key:", font=("Helvetica", 9),
+                 bg="#ffffff", width=14, anchor="w").pack(side="left")
+        self._cfg_api_key_var = tk.StringVar(value=self._ai_cfg.api_key)
+        self._cfg_api_key_entry = ttk.Entry(
+            row3, textvariable=self._cfg_api_key_var,
+            width=60, show="•")
+        self._cfg_api_key_entry.pack(side="left")
+        self._cfg_show_key_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(row3, text="Show", variable=self._cfg_show_key_var,
+                       bg="#ffffff", font=("Helvetica", 8),
+                       command=self._toggle_api_key_visibility).pack(side="left", padx=6)
+
+        row4 = tk.Frame(pf, bg="#ffffff"); row4.pack(fill="x", pady=(0, 6))
+        tk.Label(row4, text="Model Name:", font=("Helvetica", 9),
+                 bg="#ffffff", width=14, anchor="w").pack(side="left")
+        self._cfg_model_var = tk.StringVar(value=self._ai_cfg.model_name)
+        ttk.Entry(row4, textvariable=self._cfg_model_var,
+                  width=60).pack(side="left")
+
+        row5 = tk.Frame(pf, bg="#ffffff"); row5.pack(fill="x")
+        tk.Label(row5, text="Timeout (sec):", font=("Helvetica", 9),
+                 bg="#ffffff", width=14, anchor="w").pack(side="left")
+        self._cfg_timeout_var = tk.IntVar(value=self._ai_cfg.timeout)
+        ttk.Spinbox(row5, from_=30, to=600, increment=30,
+                    textvariable=self._cfg_timeout_var,
+                    width=8).pack(side="left")
+
+        # ── Preset hint ──────────────────────────────────────────────────
+        self._cfg_hint_var = tk.StringVar(value="")
+        tk.Label(pf, textvariable=self._cfg_hint_var,
+                 font=("Helvetica", 8, "italic"), fg="#3a7bd5",
+                 bg="#ffffff").pack(anchor="w", pady=(6, 0))
+        self._on_provider_change()
+
+        # ── Action buttons ───────────────────────────────────────────────
+        btn_frame = tk.Frame(outer, bg="#f0f2f5")
+        btn_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Button(btn_frame, text="💾  Save Settings",
+                   command=self._save_ai_settings).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_frame, text="🔄  Reset to Defaults",
+                   command=self._reset_ai_settings).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_frame, text="🔌  Test Connection",
+                   command=self._test_api_connection).pack(side="left")
+
+        self._cfg_status_var = tk.StringVar(value="")
+        tk.Label(btn_frame, textvariable=self._cfg_status_var,
+                 font=("Helvetica", 9, "italic"), fg="#2a9d2a",
+                 bg="#f0f2f5").pack(side="left", padx=(12, 0))
+
+        # ── Help section ─────────────────────────────────────────────────
+        help_frame = tk.LabelFrame(outer, text="  How it works  ",
+                                   bg="#ffffff", font=("Helvetica", 10, "bold"),
+                                   fg="#1d2d44", relief="groove", bd=1, padx=12, pady=10)
+        help_frame.pack(fill="x", pady=(0, 10))
+
+        help_text = (
+            "Two AI workflows coexist — pick whichever suits you:\n\n"
+            "🤖 COPY-PASTE MODE (no setup needed):\n"
+            "  Select a job → 'Copy Rating Prompt' → paste into any web AI chat → "
+            "'Paste AI Result'. Same for CV/Cover Letter in the AI Tailor tab.\n"
+            "  Works with ChatGPT, Gemini, Claude, Mistral, Perplexity.\n\n"
+            "⚡ DIRECT API MODE (configure below):\n"
+            "  Click '⚡ Rate with API' or '⚡ Generate CV/Cover Letter with API' "
+            "to call the API directly from SponsorScout — no browser needed.\n"
+            "  Requires a provider and API key.\n\n"
+            "Supported providers:\n"
+            "  • Google AI Studio (free tier available — get key at "
+            "aistudio.google.com)\n"
+            "  • NVIDIA NIM (free credits — build.nvidia.com)\n"
+            "  • OpenAI (api.openai.com)\n"
+            "  • Any OpenAI-compatible server (vLLM, Ollama, LM Studio, etc.)"
+        )
+        tk.Label(help_frame, text=help_text,
+                 font=("Helvetica", 9), fg="#555", bg="#ffffff",
+                 wraplength=900, justify="left").pack(anchor="w")
+
+    def _on_provider_change(self, _event=None):
+        """Update the hint label when the provider dropdown changes."""
+        provider = self._cfg_provider_var.get()
+        preset = PROVIDER_PRESETS.get(provider, {})
+        sdk = preset.get("sdk", "openai")
+        if sdk == "google":
+            self._cfg_hint_var.set(
+                f"→ Google Gemini via google-generativeai SDK  |  "
+                f"Free tier at aistudio.google.com")
+        else:
+            model = preset.get("model_name", "")
+            url = preset.get("base_url", "")
+            if provider == "NVIDIA NIM":
+                self._cfg_hint_var.set(
+                    "→ NVIDIA NIM via OpenAI-compatible SDK  |  "
+                    "Free credits at build.nvidia.com")
+            elif provider == "OpenAI":
+                self._cfg_hint_var.set(
+                    "→ OpenAI API (GPT-4o, etc.) via openai SDK  |  "
+                    "api.openai.com")
+            else:
+                self._cfg_hint_var.set(
+                    "→ Custom OpenAI-compatible endpoint — fill in base URL, "
+                    "model name, and API key manually.")
+
+    def _toggle_api_key_visibility(self):
+        show = " " if self._cfg_show_key_var.get() else "•"
+        self._cfg_api_key_entry.config(show=show)
+
+    def _save_ai_settings(self):
+        cfg = AIConfig(
+            provider=self._cfg_provider_var.get(),
+            base_url=self._cfg_base_url_var.get().strip(),
+            api_key=self._cfg_api_key_var.get().strip(),
+            model_name=self._cfg_model_var.get().strip(),
+            timeout=self._cfg_timeout_var.get(),
+        )
+        cfg.apply_preset()
+        save_config(cfg)
+        self._ai_cfg = cfg
+        self._cfg_status_var.set("✓ Settings saved")
+        messagebox.showinfo("Saved", "AI API settings saved.")
+
+    def _reset_ai_settings(self):
+        if messagebox.askyesno("Reset", "Reset all AI settings to defaults?"):
+            cfg = reset_config()
+            self._ai_cfg = cfg
+            self._cfg_provider_var.set(cfg.provider)
+            self._cfg_base_url_var.set(cfg.base_url)
+            self._cfg_api_key_var.set(cfg.api_key)
+            self._cfg_model_var.set(cfg.model_name)
+            self._cfg_timeout_var.set(cfg.timeout)
+            self._on_provider_change()
+            self._cfg_status_var.set("✓ Reset to defaults")
+
+    def _test_api_connection(self):
+        """Test the API connection in a background thread."""
+        # First save current settings
+        cfg = AIConfig(
+            provider=self._cfg_provider_var.get(),
+            base_url=self._cfg_base_url_var.get().strip(),
+            api_key=self._cfg_api_key_var.get().strip(),
+            model_name=self._cfg_model_var.get().strip(),
+            timeout=self._cfg_timeout_var.get(),
+        )
+        cfg.apply_preset()
+        save_config(cfg)
+        self._ai_cfg = cfg
+
+        if not cfg.is_configured:
+            messagebox.showwarning(
+                "Incomplete Settings",
+                "Please fill in API Key, Base URL, and Model Name first.")
+            return
+
+        self._cfg_status_var.set("⏳ Testing connection…")
+        self.update_idletasks()
+
+        def _worker():
+            try:
+                msg = ai_test_connection(cfg)
+                self.after(0, lambda: self._cfg_status_var.set(f"✓ {msg}"))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._cfg_status_var.set(f"❌ {e}"))
+                self.after(0, lambda e=exc: messagebox.showerror(
+                    "Connection Failed", f"Could not connect to AI API:\n\n{e}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ── AI API action handlers ───────────────────────────────────────────────
+
+    def _rate_job_with_api(self):
+        """Rate the selected job using the configured AI API (background thread)."""
+        if not self._selected_job:
+            self._ai_result_var.set(_("No job selected."))
+            return
+
+        cfg = self._ai_cfg if hasattr(self, "_ai_cfg") else load_config()
+        if not cfg.is_configured:
+            self._ai_result_var.set(
+                "❌ AI API not configured. Open the ⚙ AI Settings tab and "
+                "enter your API key, base URL, and model name.")
+            return
+
+        v = self._selected_job
+        url = str(v[-1])
+        title   = str(v[0])
+        company = str(v[1])
+        country = str(v[2])
+        spons   = int(v[5]) if str(v[5]).lstrip("-").isdigit() else 0
+        remote  = str(v[4])
+        bluecard = v[6] == "✓"
+        reloc    = v[7] == "✓"
+
+        # Show CV status
+        cv_text = load_cv()
+        if cv_text:
+            self._ai_cv_hint_var.set(_("Rating against your saved CV profile"))
+        else:
+            self._ai_cv_hint_var.set(_("No CV on file — paste yours in AI Assistant tab for personalised results"))
+
+        # Fetch description from DB
+        try:
+            conn = get_connection(DB_PATH)
+            row = conn.execute("SELECT description FROM jobs WHERE url=?", (url,)).fetchone()
+            description = row["description"] if row else ""
+            conn.close()
+        except Exception as exc:
+            logger.exception("Failed to load job description for AI rating")
+            description = ""
+
+        prompt = build_rating_prompt(
+            title=title, company=company, country=country,
+            description=description, sponsorship_score=spons,
+            remote_type=remote, eu_blue_card=bluecard,
+            has_relocation=reloc,
+            objective=self.objective_var.get(),
+        )
+
+        self._tailor_job_title   = title
+        self._tailor_job_company = company
+        self._ai_pending_url = url
+        self._ai_result_var.set("⏳ Calling AI API for rating…")
+        self.update_idletasks()
+
+        def _worker():
+            try:
+                raw_text = ai_call(prompt, config=cfg)
+                result = parse_rating_result(raw_text)
+                def _done():
+                    if not result.get("error"):
+                        self._ai_cache[url] = result
+                        rating = result.get("rating")
+                        sel = self.tree.selection()
+                        if sel and isinstance(rating, int):
+                            self._update_ai_rating_in_tree(rating, sel)
+                    self._show_ai_result(result)
+                self.after(0, _done)
+            except Exception as exc:
+                logger.exception("AI API rating failed")
+                self.after(0, lambda e=exc: self._ai_result_var.set(f"❌ API error: {e}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _generate_tailor_with_api(self, mode: str):
+        """Generate CV or Cover Letter via API (background thread).
+
+        mode: 'cv' or 'cl'
+        """
+        jd = self._tailor_jd_text.strip()
+        if not jd:
+            jd = self._jd_text_box.get("1.0", "end").strip()
+            self._tailor_jd_text = jd
+
+        if not jd:
+            messagebox.showwarning(
+                "No Job Description",
+                "Fetch or paste a job description first, then click 'Use this JD'.")
+            return
+
+        cv_text = self._cv_text_box.get("1.0", "end").strip()
+        if not cv_text:
+            messagebox.showwarning(
+                "No CV",
+                "Paste your CV in the 'My CV' box and save it first.")
+            return
+
+        cfg = self._ai_cfg if hasattr(self, "_ai_cfg") else load_config()
+        if not cfg.is_configured:
+            self._tailor_progress_var.set(
+                "❌ AI API not configured. Open the ⚙ AI Settings tab.")
+            return
+
+        if mode == "cv":
+            prompt = build_cv_prompt(cv_text, jd)
+            label = "CV"
+        else:
+            prompt = build_cover_letter_prompt(
+                cv_text, jd,
+                base_letter=self._cl_template_box.get("1.0", "end").strip(),
+            )
+            label = "Cover Letter"
+
+        self._result_tab_var.set(mode)
+        self._tailor_progress_var.set(f"⏳ Calling AI API for {label.lower()} generation…")
+        self.update_idletasks()
+
+        def _worker():
+            try:
+                raw_text = ai_call(prompt, config=cfg)
+                parsed = parse_text_result(raw_text)
+                def _done():
+                    if parsed.get("error"):
+                        self._tailor_progress_var.set(f"❌ {parsed['error']}")
+                    else:
+                        text = parsed["text"]
+                        if mode == "cv":
+                            self._tailor_cv_result = text
+                        else:
+                            self._tailor_cl_result = text
+                        self._switch_result_view()
+                        self._tailor_progress_var.set(
+                            f"✓ {label} generated via API — edit if needed, then '📋 Copy'")
+                self.after(0, _done)
+            except Exception as exc:
+                logger.exception("AI API tailor generation failed")
+                self.after(0, lambda e=exc: self._tailor_progress_var.set(f"❌ API error: {e}"))
 
         threading.Thread(target=_worker, daemon=True).start()
 

@@ -70,6 +70,41 @@ finds, and stops once `document.body.scrollHeight` stops growing.
 - 6 new tests in `tests/test_portal_search_robustness.py` cover each fix
   above with synthetic HTML/JSON (no live network access required).
 
+## 6. AI Gateway with configurable base URL, API key, and model
+
+`sponsorscout/services/ai_gateway.py` now routes calls through
+`sponsorscout/services/ai_config.py`, which exposes a **per-provider settings
+panel** (base URL, API key, model name) accessible from the UI. This means
+users can point at self-hosted endpoints or change models without touching code.
+
+The gateway auto-detects the provider from the base URL:
+- **Gemini** (`generativelanguage.googleapis.com` / `google` in domain) →
+  `google-generativeai`
+- **OpenAI-compatible** (everything else) → `openai` with a thin shim
+
+Both libraries are imported **lazily inside each provider function**, so the
+app still starts even if one library is missing.
+
+### Build scripts – bundle the new AI packages
+
+Because `google-generativeai` and `openai` are imported inside function bodies
+(conditional/dynamic imports), PyInstaller's static analysis previously missed
+them. The packaged `.exe` / `.deb` builds would crash on the first AI
+operation with *"[package] is not installed"*.
+
+**Fix**: both `build_deb.sh` and `build_exe.ps1` now include:
+
+```
+--collect-submodules google
+--collect-submodules google.generativeai
+--collect-submodules openai
+--hidden-import google.generativeai
+--hidden-import openai
+```
+
+This ensures every module required by both SDKs is bundled, regardless of how
+the import is structured in the source.
+
 ## Notes / next steps
 
 - This sandbox has no network access to bolt.eu / shopify.com etc., so these

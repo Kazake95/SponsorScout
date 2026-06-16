@@ -47,6 +47,11 @@ python3 -m PyInstaller \
   --collect-data sponsorscout \
   --collect-submodules sponsorscout \
   --collect-submodules playwright \
+  --collect-submodules google \
+  --collect-submodules google.generativeai \
+  --collect-submodules openai \
+  --hidden-import google.generativeai \
+  --hidden-import openai \
   sponsorscout/main.py
 
 cp -a "dist/$APP_NAME/"* "$APP_DIR/"

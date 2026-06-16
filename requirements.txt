@@ -8,3 +8,7 @@ pyinstaller>=6.0.0
 #innosetup.exe & python.exe for windows build
 #AI Assistant tab opens AI chat sites in the user's default browser via the
 #stdlib 'webbrowser' module -- no extra runtime dependencies needed.
+#
+#AI API direct-calling (for ⚙ AI Settings → ⚡ Rate with API / Generate with API)
+google-generativeai>=0.7.0
+openai>=1.0.0

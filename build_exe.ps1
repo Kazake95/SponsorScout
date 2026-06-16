@@ -63,6 +63,11 @@ if (Test-Path $DistDir) {
     --collect-data sponsorscout `
     --collect-submodules sponsorscout `
     --collect-submodules playwright `
+    --collect-submodules google `
+    --collect-submodules google.generativeai `
+    --collect-submodules openai `
+    --hidden-import google.generativeai `
+    --hidden-import openai `
     sponsorscout/main.py
 
 if (-not (Test-Path $ExePath)) {
