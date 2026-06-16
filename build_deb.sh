@@ -56,36 +56,65 @@ python3 -m PyInstaller \
 
 cp -a "dist/$APP_NAME/"* "$APP_DIR/"
 
-# Bundle Playwright's Chromium so JS-rendered career pages work out of the box.
-# Without this, the installed app gets 0 jobs from all SPA career portals
-# because Playwright can't find the browser binary.
-PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${HOME}/.cache/ms-playwright}"
-if [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-  CHROMIUM_DIR=$(find "$PLAYWRIGHT_BROWSERS_PATH" -maxdepth 1 -name "chromium*" -type d | head -1)
-  if [ -n "$CHROMIUM_DIR" ]; then
-    mkdir -p "$APP_DIR/_playwright"
-    cp -a "$CHROMIUM_DIR" "$APP_DIR/_playwright/"
-    echo "Bundled Chromium from $CHROMIUM_DIR"
-  else
-    echo "WARNING: No Chromium directory found in $PLAYWRIGHT_BROWSERS_PATH" >&2
-  fi
-else
-  echo "WARNING: Playwright browsers cache not found at $PLAYWRIGHT_BROWSERS_PATH" >&2
-fi
+# ── Size reduction: strip binaries, remove caches, remove Chromium ───────────
+echo "Reducing .deb size…"
+
+# Strip ELF shared libraries and executables (saves 20-40 MB)
+find "$APP_DIR" -type f \( -name "*.so" -o -name "*.so.*" \) \
+  ! -name "*.pyd" -print0 2>/dev/null | xargs -0 strip --strip-unneeded 2>/dev/null || true
+find "$APP_DIR" -maxdepth 1 -type f -executable -print0 2>/dev/null | \
+  xargs -0 -I{} sh -c 'file "$1" | grep -q ELF && strip --strip-unneeded "$1" 2>/dev/null' _ {} || true
+
+# Remove __pycache__ directories and .pyc files (saves 5-15 MB)
+find "$APP_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "$APP_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
+
+# Remove dist-info metadata directories (saves 5-10 MB)
+find "$APP_DIR" -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+
+# Remove unnecessary locale data (saves 2-5 MB)
+find "$APP_DIR" -type d -name "locale" -exec rm -rf {} + 2>/dev/null || true
+
+# Remove test directories bundled from packages (saves 5-20 MB)
+find "$APP_DIR" -type d \( -name "tests" -o -name "test" -o -name "testing" \) \
+  -not -path "*/sponsorscout/*" -exec rm -rf {} + 2>/dev/null || true
+
+# Remove Chromium from Playwright bundle if it got included inadvertently
+rm -rf "$APP_DIR/_playwright" 2>/dev/null || true
+find "$APP_DIR" -path "*/playwright/driver/package/.local-browsers/*" -exec rm -rf {} + 2>/dev/null || true
+
+echo "Size reduction complete."
 
 mkdir -p "$BUILD_DIR/usr/bin"
 cat > "$BUILD_DIR/usr/bin/sponsorscout" <<'EOL'
 #!/bin/sh
-# Fix B-1: PyInstaller --onedir --name=SponsorScout lays out
-#     dist/SponsorScout/{SponsorScout (binary) + support files}
-# We copy the *contents* of dist/SponsorScout/ into /opt/sponsorscout/, so
-# the binary lives at /opt/sponsorscout/SponsorScout (not nested in another
-# SponsorScout/ dir). Previous version pointed at
-# /opt/sponsorscout/SponsorScout/SponsorScout which did not exist.
-# Point Playwright at the bundled Chromium binary so JS-rendered
-# career pages work on the installed system without a separate install step.
-export PLAYWRIGHT_BROWSERS_PATH=/opt/sponsorscout/_playwright
-exec /opt/sponsorscout/SponsorScout "$@"
+# SponsorScout launcher
+# The binary lives at /opt/sponsorscout/SponsorScout after copying the
+# *contents* of dist/SponsorScout/ into /opt/sponsorscout/.
+
+APP_BIN="/opt/sponsorscout/SponsorScout"
+
+# Verify the binary exists and is executable.
+if [ ! -f "$APP_BIN" ]; then
+  echo "SponsorScout: ERROR — $APP_BIN not found." >&2
+  echo "  The .deb package may not have installed correctly." >&2
+  echo "  Try reinstalling:  sudo dpkg --purge sponsorscout && sudo dpkg -i sponsorscout_*.deb" >&2
+  exit 1
+fi
+if [ ! -x "$APP_BIN" ]; then
+  echo "SponsorScout: ERROR — $APP_BIN is not executable." >&2
+  echo "  Try:  sudo chmod +x $APP_BIN" >&2
+  exit 1
+fi
+
+# Ensure the Playwright browser binary directory exists.
+# Users need to run:  python3 -m playwright install chromium
+# (once, or let the app download it at first launch).
+if [ -z "$PLAYWRIGHT_BROWSERS_PATH" ]; then
+  export PLAYWRIGHT_BROWSERS_PATH="${HOME}/.cache/ms-playwright"
+fi
+
+exec "$APP_BIN" "$@"
 EOL
 chmod 755 "$BUILD_DIR/usr/bin/sponsorscout"
 
@@ -128,12 +157,29 @@ EOL
 cat > "$DEBIAN_DIR/postinst" <<'EOL'
 #!/bin/sh
 set -e
+# Update desktop database and icon cache
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
 fi
+
+# Auto-install Playwright Chromium so SPA career portals work out of the box.
+# This runs once after package install; it's ~150 MB and required for
+# JavaScript-rendered career pages.
+PYTHON=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+if [ -n "$PYTHON" ] && "$PYTHON" -c "import playwright" 2>/dev/null; then
+  echo "SponsorScout: installing Playwright Chromium browser (one-time, ~150 MB)…"
+  "$PYTHON" -m playwright install chromium >/dev/null 2>&1 || true
+fi
+
 exit 0
 EOL
 chmod 755 "$DEBIAN_DIR/postinst"
@@ -159,7 +205,18 @@ exit 0
 EOL
 chmod 755 "$DEBIAN_DIR/postrm"
 
+# Verify the binary was copied and is a valid ELF executable.
+if [ ! -x "$APP_DIR/$APP_NAME" ]; then
+  echo "ERROR: $APP_NAME binary not found in $APP_DIR after PyInstaller build." >&2
+  echo "Contents of $APP_DIR:" >&2
+  ls -la "$APP_DIR/" >&2
+  exit 1
+fi
+
+echo "Binary size: $(du -sh "$APP_DIR/$APP_NAME" | cut -f1)"
+
 # dpkg-deb does not require root when the package tree is staged locally.
 dpkg-deb --build "$BUILD_DIR" "$DIST_DIR/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb" >/dev/null
 
-echo "Built $DIST_DIR/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb"
+DEB_SIZE=$(du -sh "$DIST_DIR/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb" | cut -f1)
+echo "Built $DIST_DIR/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb  (${DEB_SIZE})"

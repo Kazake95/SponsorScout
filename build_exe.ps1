@@ -68,6 +68,13 @@ if (Test-Path $DistDir) {
     --collect-submodules openai `
     --hidden-import google.generativeai `
     --hidden-import openai `
+    --hidden-import pystray `
+    --hidden-import pystray._win32 `
+    --hidden-import pystray._appindicator `
+    --hidden-import pystray._gtk `
+    --hidden-import pystray._xorg `
+    --hidden-import PIL `
+    --hidden-import PIL._tkinter_finder `
     sponsorscout/main.py
 
 if (-not (Test-Path $ExePath)) {

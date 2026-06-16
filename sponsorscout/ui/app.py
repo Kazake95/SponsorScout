@@ -7,6 +7,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
+try:
+    import pystray
+    from PIL import Image, ImageTk
+    _HAS_TRAY = True
+except ImportError:
+    _HAS_TRAY = False
+
 from sponsorscout.i18n import _, set_locale, get_locale, load_saved_locale, get_available_locales, get_locale_name
 
 logger = logging.getLogger(__name__)
@@ -57,12 +64,14 @@ OBJECTIVE_OPTIONS = available_search_objective_labels()
 
 class SponsorScoutApp(tk.Tk):
 
-    def __init__(self):
+    def __init__(self, start_minimized: bool = False):
         super().__init__()
         load_saved_locale()
         self.title("SponsorScout v0.1.1")
         self.geometry("1380x840")
         self._selected_job = None
+        self._start_minimized = start_minimized
+        self._tray_icon = None
         # BUG-FIX: initialise caches before _build_ui / load_results so
         # load_results() never hits AttributeError on self._ai_cache
         self._ai_cache: dict[str, dict] = {}
@@ -83,6 +92,10 @@ class SponsorScoutApp(tk.Tk):
         self.load_applications()
         self.load_health()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Setup system tray icon (background mode support)
+        self._setup_tray_icon()
+        if start_minimized:
+            self.withdraw()  # Hide window, show tray icon only
         self.after(500, self._check_first_run)
 
     # ── Icon ──────────────────────────────────────────────────────────────────
@@ -114,12 +127,16 @@ class SponsorScoutApp(tk.Tk):
                 pass
 
     def _on_close(self):
+        """Minimize to system tray instead of quitting."""
         self._scanner.stop()
         self._ai_webview.close()
-        try:
-            self.quit()
-        finally:
-            self.destroy()
+        if _HAS_TRAY and self._tray_icon is not None:
+            self.withdraw()  # Hide the window
+        else:
+            try:
+                self.quit()
+            finally:
+                self.destroy()
 
     def _on_scan_progress(self, msg: str):
         self._append_scan_log(msg)
@@ -135,6 +152,64 @@ class SponsorScoutApp(tk.Tk):
         self.load_health()
         self.scan_status.set("idle")
         self.status_var.set("Scan complete.")
+
+    def _setup_tray_icon(self):
+        """Create and start the system tray icon."""
+        if not _HAS_TRAY:
+            self._tray_icon = None
+            return
+
+        icon_path = Path(__file__).resolve().parent.parent / "data" / "sponsorscout.ico"
+        if not icon_path.exists():
+            icon_path = Path(__file__).resolve().parent.parent / "data" / "icons" / "sponsorscout.png"
+        
+        try:
+            if icon_path.suffix.lower() == ".ico":
+                icon_image = Image.open(str(icon_path))
+            else:
+                icon_image = Image.open(str(icon_path))
+        except Exception as exc:
+            logger.warning("Failed to load tray icon: %s", exc)
+            # Create a simple 1x1 icon as fallback
+            icon_image = Image.new("RGB", (64, 64), "#1d2d44")
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Show SponsorScout", self._on_tray_show, default=True),
+            pystray.MenuItem("Quit", self._on_tray_quit),
+        )
+
+        self._tray_icon = pystray.Icon(
+            "SponsorScout",
+            icon_image,
+            "SponsorScout",
+            menu,
+        )
+        threading.Thread(target=self._tray_icon.run, daemon=True).start()
+        logger.info("System tray icon started")
+
+    def _on_tray_show(self, icon=None, item=None):
+        """Restore the main window from the tray."""
+        self.after(0, self._restore_from_tray)
+
+    def _restore_from_tray(self):
+        """Restore the window from the tray (must run on main thread)."""
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _on_tray_quit(self, icon=None, item=None):
+        """Quit the application completely."""
+        if self._tray_icon is not None:
+            self._tray_icon.stop()
+            self._tray_icon = None
+        self.after(0, self._force_quit)
+
+    def _force_quit(self):
+        """Force quit the application (must run on main thread)."""
+        try:
+            self.quit()
+        finally:
+            self.destroy()
 
     def _check_first_run(self):
         try:
@@ -2409,7 +2484,7 @@ class SponsorScoutApp(tk.Tk):
         threading.Thread(target=_worker, daemon=True).start()
 
 
-def main():
+def main(start_minimized: bool = False):
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -2417,7 +2492,7 @@ def main():
     )
     logger.info("SponsorScout starting up")
     initialize()
-    app = SponsorScoutApp()
+    app = SponsorScoutApp(start_minimized=start_minimized)
     app.mainloop()
 
 

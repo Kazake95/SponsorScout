@@ -58,40 +58,12 @@ _configure_bundled_playwright_browsers_path()
 
 
 def _get_windows_appdata_dir(app_name: str) -> Path:
-    """Return the *per-user* application data directory on Windows."""
-    # Use GetKnownFolderPath via ctypes (modern, reliable, works on all
-    # supported Windows versions).  Fails back to the environment variable.
-    try:
-        import ctypes
-        from ctypes import wintypes
+    """Return the *per-user* application data directory on Windows.
 
-        class GUID(ctypes.Structure):
-            _fields_ = [
-                ("Data1", ctypes.c_ulong),
-                ("Data2", ctypes.c_ushort),
-                ("Data3", ctypes.c_ushort),
-                ("Data4", ctypes.c_ubyte * 8),
-            ]
-
-        FOLDERID_RoamingAppData = GUID(
-            0x3EB685DB, 0x65F9, 0x4CF6, (
-                0xA0, 0xBA, 0x88, 0x15, 0x0, 0x8D, 0xF2, 0xB1)
-        )
-
-        ctypes.windll.shell32.SHGetKnownFolderPath(
-            ctypes.byref(FOLDERID_RoamingAppData), 0, None, ctypes.byref(wintypes.LPWSTR())
-        )
-        # Function returns a pointer; we convert it.
-        pf = ctypes.windll.shell32.SHGetKnownFolderPath
-        pf.argtypes = [ctypes.POINTER(GUID), ctypes.c_uint32, ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
-        pf.restype = ctypes.c_int
-        path_ptr = wintypes.LPWSTR()
-        result = pf(ctypes.byref(FOLDERID_RoamingAppData), 0, None, ctypes.byref(path_ptr))
-        if result == 0:
-            return Path(path_ptr.value) / app_name
-    except Exception:
-        pass
-    # Fallback to environment variable or home directory
+    Uses %APPDATA% (e.g. C:\\Users\\<user>\\AppData\\Roaming) which is the
+    standard location for per-user application data on Windows.  Falls back
+    to the home directory if the environment variable is missing.
+    """
     env_path = os.environ.get("APPDATA")
     if env_path:
         return Path(env_path) / app_name

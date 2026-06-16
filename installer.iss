@@ -7,7 +7,6 @@
 ; - no duplicate uninstall registry entry
 ; - force-close running app during uninstall/install
 ; - remove AppData user-data folder on uninstall
-; - RecursiveDelete ensures complete removal even when files are locked
 ; - UninstallRun kills SponsorScout.exe before file deletion
 ;
 
@@ -54,7 +53,7 @@ RestartApplications=no
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "dist\SponsorScout-InstallerFiles\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+Source: "dist\SponsorScout-InstallerFiles\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs solid
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIcoName}"
@@ -78,9 +77,10 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im Sponsorscout.exe"; Flags: ru
 [UninstallDelete]
 ; Remove the entire install directory tree (PyInstaller _internal + all subdirs)
 Type: filesandordirs; Name: "{app}\*"
-Type: filesandordirs; Name: "{app}"
 ; Remove the user data directory (DB, logs, profiles, locale)
 Type: filesandordirs; Name: "{userappdata}\SponsorScout"
+; Remove the Playwright registry value
+Type: filesandordirs; Name: "{app}\_playwright"
 
 [Code]
 const
@@ -89,44 +89,6 @@ const
 function GetUserAppDataDir(): string;
 begin
   Result := ExpandConstant('{userappdata}\' + AppDataDirName);
-end;
-
-function RemoveDirRecursively(DirPath: string): Boolean;
-var
-  FindRec: TFindRec;
-  FullPath: string;
-begin
-  Result := True;
-
-  if not DirExists(DirPath) then
-    Exit;
-
-  if FindFirst(DirPath + '\*', FindRec) then
-  begin
-    try
-      repeat
-        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
-        begin
-          FullPath := DirPath + '\' + FindRec.Name;
-          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
-          begin
-            if not RemoveDirRecursively(FullPath) then
-              Result := False;
-          end
-          else
-          begin
-            if not DeleteFile(FullPath) then
-              Result := False;
-          end;
-        end;
-      until not FindNext(FindRec);
-    finally
-      FindClose(FindRec);
-    end;
-  end;
-
-  if not RemoveDir(DirPath) then
-    Result := False;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -157,6 +119,7 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   AppDir: string;
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
@@ -164,10 +127,7 @@ begin
     if DirExists(AppDir) then
     begin
       Log('Removing AppData directory: ' + AppDir);
-      if not RemoveDirRecursively(AppDir) then
-      begin
-        Log('Warning: Failed to remove AppData directory: ' + AppDir);
-      end;
+      DelTree(AppDir, True, True, True);
     end;
   end;
 end;

@@ -5,6 +5,8 @@ Pillow>=10.0.0,<11.0.0
 playwright>=1.40.0,<2.0.0
 pytest>=7.0.0
 pyinstaller>=6.0.0
+# System tray support (background mode, minimize-to-tray)
+pystray>=0.19.0
 #innosetup.exe & python.exe for windows build
 #AI Assistant tab opens AI chat sites in the user's default browser via the
 #stdlib 'webbrowser' module -- no extra runtime dependencies needed.
