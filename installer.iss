@@ -50,9 +50,6 @@ DisableFinishedPage=no
 ; Force-close the app during both install and uninstall
 CloseApplications=force
 RestartApplications=no
-; Enable recursive delete for [UninstallDelete] to fully remove locked/fragmented files
-RecursiveDelete=yes
-
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
