@@ -315,6 +315,9 @@ def _extract_json_jobs(
     after the page loads — so the DOM/script-tag scan above finds nothing
     even after rendering. Walking these captured responses through the same
     heuristics catches that case.
+
+    When *extra_blobs* is a ``_CaptureResult`` (from ``browser_fetcher``), the
+    broad secondary pool is tried if the primary pool yields nothing.
     """
     found: list[PortalJob] = []
 
@@ -357,6 +360,7 @@ def _extract_json_jobs(
                     return found[:limit]
 
     # Strategy 3: JSON blobs captured from network XHR/fetch responses.
+    # Walk the primary pool first.
     for blob in (extra_blobs or []):
         if len(found) >= limit:
             break
@@ -364,6 +368,17 @@ def _extract_json_jobs(
             _collect_jobs_from_json(blob, base_url, found, limit)
         except Exception:
             continue
+
+    # Strategy 3b: If the primary pool yielded nothing and extra_blobs is a
+    # _CaptureResult with a broad secondary pool, try that too.
+    if not found and hasattr(extra_blobs, "broad"):
+        for blob in extra_blobs.broad:
+            if len(found) >= limit:
+                break
+            try:
+                _collect_jobs_from_json(blob, base_url, found, limit)
+            except Exception:
+                continue
 
     return found[:limit]
 
@@ -373,30 +388,111 @@ def _collect_jobs_from_json(
     base_url: str,
     out: list[PortalJob],
     limit: int,
+    _depth: int = 0,
 ) -> None:
-    """Walk a (possibly nested) JSON structure looking for job-like dicts."""
+    """Walk a (possibly nested) JSON structure looking for job-like dicts.
+
+    Handles common SPA / GraphQL / REST API shapes:
+      - Flat list of job dicts
+      - { "jobs": [...] }  /  { "positions": [...] }  /  { "data": { "jobs": { "edges": [...] } } }
+      - GraphQL: { "data": { "jobs": { "edges": [ { "node": { ... } } ] } } }
+      - Workday-style: { "jobPostings": [...] }
+    """
+    # Guard against excessively deep recursion
+    if _depth > 12:
+        return
+
     if isinstance(blob, dict):
         # If this dict itself looks like a single job, collect it
         if _is_job_dict(blob):
             _add_json_job(blob, base_url, out, limit)
             return
-        # Otherwise recurse into values
+
+        # Check if this dict contains a well-known list key for job data
+        for key in (
+            "jobs", "positions", "postings", "openings", "vacancies",
+            "results", "items", "data", "job_postings", "jobPostings",
+            "edges", "nodes", "opportunities", "roles", "listings",
+        ):
+            if key in blob:
+                _collect_jobs_from_json(blob[key], base_url, out, limit, _depth + 1)
+                if len(out) >= limit:
+                    return
+
+        # Also check nested: data -> jobs -> edges/nodes
+        if "data" in blob and isinstance(blob["data"], dict):
+            for inner_key in ("jobs", "positions", "postings", "openings", "search", "career"):
+                if inner_key in blob["data"]:
+                    _collect_jobs_from_json(blob["data"][inner_key], base_url, out, limit, _depth + 1)
+                    if len(out) >= limit:
+                        return
+
+        # Recurse into all values as a final pass
         for v in blob.values():
-            _collect_jobs_from_json(v, base_url, out, limit)
-            if len(out) >= limit:
-                return
+            if isinstance(v, (dict, list)):
+                _collect_jobs_from_json(v, base_url, out, limit, _depth + 1)
+                if len(out) >= limit:
+                    return
+
     elif isinstance(blob, list):
         for item in blob:
-            _collect_jobs_from_json(item, base_url, out, limit)
-            if len(out) >= limit:
-                return
+            if isinstance(item, dict) and _is_job_dict(item):
+                _add_json_job(item, base_url, out, limit)
+                if len(out) >= limit:
+                    return
+            elif isinstance(item, (dict, list)):
+                _collect_jobs_from_json(item, base_url, out, limit, _depth + 1)
+                if len(out) >= limit:
+                    return
 
 
 def _is_job_dict(d: dict) -> bool:
-    """Heuristic: does this dict represent a single job listing?"""
+    """Heuristic: does this dict represent a single job listing?
+
+    Recognises a wide range of key-name conventions across ATS platforms:
+      - Standard: title, name, job_title, position_title, role
+      - Workday: title + externalPath
+      - Greenhouse: title + absolute_url
+      - Lever: text + hostedUrl
+      - Shopify/Generic: position_name + apply_url
+      - GraphQL edges: node with nested fields
+    """
     keys_lower = {k.lower() for k in d.keys()}
-    has_title = bool(keys_lower & {"title", "name", "job_title", "position_title", "role"})
-    has_url = bool(keys_lower & {"url", "absolute_url", "job_url", "link", "href", "apply_url", "external_url"})
+
+    title_keys = {
+        "title", "name", "job_title", "position_title", "role",
+        "job_name", "position_name", "opening_title", "vacancy_title",
+        "position", "opening", "requisition_title", "req_title",
+        "text", "label", "heading",
+    }
+    url_keys = {
+        "url", "absolute_url", "job_url", "link", "href", "apply_url",
+        "external_url", "job_url", "posting_url", "application_url",
+        "apply_link", "detail_url", "apply_url", "posting_url",
+        "external_path",  # Workday
+        "hosted_url",     # Lever
+        "absolute_url",   # Greenhouse
+        "job_url",        # Various
+        "href",           # Generic HTML
+    }
+    # Also catch nested URL under "data", "fields", "attributes"
+    nested_url_keys = {"data", "fields", "attributes", "properties"}
+
+    has_title = bool(keys_lower & title_keys)
+    has_url = bool(keys_lower & url_keys)
+
+    # Special case: Workday uses "externalPath" (not a full URL) + "title"
+    if has_title and "externalpath" in keys_lower:
+        return True
+
+    # Special case: some SPAs store URL in nested object (data.url, fields.url)
+    if has_title and not has_url:
+        for nk in nested_url_keys:
+            if nk in d and isinstance(d[nk], dict):
+                nested_keys = {k.lower() for k in d[nk].keys()}
+                if nested_keys & url_keys:
+                    return True
+
     return has_title and has_url
 
 
@@ -408,35 +504,90 @@ def _add_json_job(
 ) -> None:
     if len(out) >= limit:
         return
+
+    # ── Extract title ──
     title_key = None
-    for k in ("title", "name", "job_title", "position_title", "role"):
+    for k in (
+        "title", "name", "job_title", "position_title", "role",
+        "job_name", "position_name", "opening_title", "vacancy_title",
+        "position", "opening", "text", "label", "heading",
+    ):
         if k in d:
             title_key = k
             break
-    url_key = None
-    for k in ("url", "absolute_url", "job_url", "link", "href", "apply_url", "external_url"):
-        if k in d:
-            url_key = k
+    title = str(d.get(title_key, "")).strip() if title_key else ""
+    if not title or len(title) < 2:
+        return
+
+    # ── Extract URL ──
+    url_raw = ""
+    for k in (
+        "url", "absolute_url", "job_url", "link", "href", "apply_url",
+        "external_url", "posting_url", "application_url", "apply_link",
+        "detail_url", "hosted_url",
+    ):
+        val = d.get(k)
+        if val:
+            url_raw = str(val).strip()
             break
-    if not title_key or not url_key:
+
+    # Workday uses externalPath (relative path, not full URL)
+    if not url_raw:
+        ext_path = d.get("external_path") or d.get("externalPath")
+        if ext_path:
+            url_raw = str(ext_path).strip()
+
+    # Check nested objects for URL (e.g. data.url, fields.url)
+    if not url_raw:
+        for nk in ("data", "fields", "attributes", "properties"):
+            nested = d.get(nk)
+            if isinstance(nested, dict):
+                for k in ("url", "absolute_url", "job_url", "link", "href", "apply_url", "external_url"):
+                    val = nested.get(k)
+                    if val:
+                        url_raw = str(val).strip()
+                        break
+                if url_raw:
+                    break
+
+    if not url_raw:
         return
 
-    title = str(d.get(title_key, "")).strip()
-    url_raw = str(d.get(url_key, "")).strip()
-    if not title or not url_raw:
-        return
-    url = normalize_url(urljoin(base_url, url_raw))
+    # Build full URL
+    if url_raw.startswith("http"):
+        url = normalize_url(url_raw)
+    elif url_raw.startswith("/"):
+        url = normalize_url(urljoin(base_url, url_raw))
+    else:
+        url = normalize_url(urljoin(base_url, url_raw))
 
+    # ── Extract location ──
     location = ""
-    for k in ("location", "location_name", "office", "city", "country", "region"):
-        if k in d and d[k]:
-            location = str(d[k]).strip()
+    for k in (
+        "location", "location_name", "office", "city", "country", "region",
+        "locations_text", "locationsText", "location_str",
+    ):
+        val = d.get(k)
+        if val:
+            if isinstance(val, list):
+                location = ", ".join(str(v) for v in val[:3])
+            else:
+                location = str(val).strip()
             break
 
+    # ── Extract description ──
     description = ""
-    for k in ("description", "description_html", "summary", "snippet", "short_description"):
-        if k in d and d[k]:
-            description = str(d[k]).strip()
+    for k in (
+        "description", "description_html", "summary", "snippet",
+        "short_description", "content", "description_text",
+    ):
+        val = d.get(k)
+        if val:
+            if isinstance(val, dict):
+                # Handle nested description (e.g. { "text": "..." } )
+                description = str(val.get("text", "") or val.get("html", "") or "")
+            else:
+                description = str(val).strip()
             break
 
     out.append(PortalJob(title=title[:200], url=url, location=location, description=description[:2000]))

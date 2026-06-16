@@ -156,7 +156,19 @@ def _wait_for_job_elements(page, timeout_ms: int = 8000) -> bool:
 # (used to decide which network responses are worth capturing as JSON).
 _JOB_API_URL_HINTS = re.compile(
     r"(job|career|position|vacanc|opening|role|posting|requisition|"
-    r"graphql|search|listing|board)",
+    r"graphql|search|listing|board|"
+    r"api/|/v[12]/|/wp-json|/contentful|"
+    r"recruiting|talent|applicant|"
+    r"workday|greenhouse|lever|ashby|bamboo|personio|teamtailor|"
+    r"smartrecruiters|recruitee|icims|jobvite|freshteam|breezy|homerun|"
+    r"wttj|manatal)",
+    re.I,
+)
+
+# Broader hint — any API-looking URL that might carry structured data.
+# Used as a second-pass capture after the primary hints run out.
+_BROAD_API_URL_HINTS = re.compile(
+    r"(/api/|/v[12]/|/graphql|/data/|/rest/|/ws/|\.json$|/feed/|/catalog/)",
     re.I,
 )
 
@@ -169,7 +181,7 @@ _LOAD_MORE_TEXT_RE = re.compile(
 )
 
 
-def _register_json_capture(page, max_items: int = 25, max_bytes: int = 500_000) -> list:
+def _register_json_capture(page, max_items: int = 50, max_bytes: int = 1_000_000) -> list:
     """Attach a response listener that captures small-ish JSON API payloads.
 
     Many SPA career portals (Bolt, Shopify, custom React/Vue boards) never
@@ -178,25 +190,52 @@ def _register_json_capture(page, max_items: int = 25, max_bytes: int = 500_000) 
     lets ``portal_search`` run the same job-extraction heuristics against
     them even when the rendered DOM has nothing useful.
 
+    Uses a two-pass approach:
+      1. Primary pass: capture responses matching job/ATS-related URL patterns
+      2. Broad pass: capture any remaining API responses that look structured
+
     Returns a list that is appended to in place as matching responses arrive.
     """
     captured: list = []
+    broad_captured: list = []
 
     def _on_response(response):
         try:
-            if len(captured) >= max_items:
-                return
             url = response.url or ""
-            if not _JOB_API_URL_HINTS.search(url):
+            if not url or url.startswith("data:"):
                 return
             ctype = (response.headers or {}).get("content-type", "")
-            if "json" not in ctype.lower():
+            ctype_lower = ctype.lower()
+            # Accept JSON content types, but also tolerate missing/empty
+            # content-type for APIs that don't set it correctly.
+            is_json_ct = "json" in ctype_lower or "javascript" in ctype_lower
+            is_no_ct = not ctype or ctype_lower.startswith("text/plain")
+
+            is_primary_match = bool(_JOB_API_URL_HINTS.search(url))
+            is_broad_match = bool(_BROAD_API_URL_HINTS.search(url))
+
+            if not is_primary_match and not is_broad_match:
                 return
+            if not is_json_ct and not is_no_ct:
+                return
+
             body = response.body()
             if not body or len(body) > max_bytes:
                 return
-            blob = json.loads(body.decode("utf-8", errors="ignore"))
-            captured.append(blob)
+
+            decoded = body.decode("utf-8", errors="ignore").strip()
+            if not decoded:
+                return
+
+            # Quick sanity check — must start with { or [
+            if not (decoded.startswith("{") or decoded.startswith("[")):
+                return
+
+            blob = json.loads(decoded)
+            if is_primary_match and len(captured) < max_items:
+                captured.append(blob)
+            elif is_broad_match and len(broad_captured) < max_items:
+                broad_captured.append(blob)
         except Exception:
             # Response bodies for redirected/aborted/streaming requests can
             # raise — never let capture failures break the main render.
@@ -207,7 +246,22 @@ def _register_json_capture(page, max_items: int = 25, max_bytes: int = 500_000) 
     except Exception:
         pass
 
-    return captured
+    # Return primary captures first; broad captures are appended as a
+    # secondary pool so ``portal_search`` can try them if primary yields
+    # nothing useful.
+    return _CaptureResult(captured, broad_captured)
+
+
+class _CaptureResult(list):
+    """Thin wrapper that carries both primary and broad JSON captures.
+
+    Behaves like a list for backward compatibility, but also exposes
+    ``.broad`` for callers that want the secondary pool.
+    """
+
+    def __init__(self, primary, broad):
+        super().__init__(primary)
+        self.broad = broad or []
 
 
 def _scroll_and_expand(page, max_rounds: int = 8) -> None:
@@ -337,12 +391,15 @@ def _render_with_playwright(url: str, wait_ms: int = 2500, timeout: int = 30) ->
             # Navigate with realistic timing
             page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
 
-            # Randomize initial wait to appear more human-like
-            initial_wait = max(wait_ms, random.randint(1500, 3000))
+            # Randomize initial wait to appear more human-like and give
+            # SPAs time to bootstrap, hydrate, and fire their API calls.
+            initial_wait = max(wait_ms, random.randint(2000, 4000))
             page.wait_for_timeout(initial_wait)
 
-            # Wait for job listing elements to appear (with fallback)
-            found_jobs = _wait_for_job_elements(page, timeout_ms=min(timeout * 1000 // 2, 5000))
+            # Wait for job listing elements to appear (with fallback).
+            # Use a longer timeout — many career SPAs take 5-8s to fully
+            # hydrate and render listings.
+            found_jobs = _wait_for_job_elements(page, timeout_ms=min(timeout * 1000 // 2, 8000))
 
             if not found_jobs:
                 # Trigger lazy-loaded listings / infinite scroll content, and
@@ -350,15 +407,18 @@ def _render_with_playwright(url: str, wait_ms: int = 2500, timeout: int = 30) ->
                 _scroll_and_expand(page)
 
                 # Check again for job elements after scroll/expand
-                found_jobs = _wait_for_job_elements(page, timeout_ms=3000)
+                found_jobs = _wait_for_job_elements(page, timeout_ms=5000)
 
+            # Wait for network to settle — give in-flight XHR/fetch
+            # requests (especially GraphQL job-data calls) time to land.
             try:
-                page.wait_for_load_state("networkidle", timeout=5000)
+                page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
 
-            # Give any in-flight XHR/fetch job-data requests a moment to land.
-            page.wait_for_timeout(500)
+            # Extra settling time for slow SPAs that fire API calls
+            # after networkidle.
+            page.wait_for_timeout(1500)
 
             html = page.content() or ""
 

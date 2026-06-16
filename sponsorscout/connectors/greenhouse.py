@@ -15,9 +15,7 @@ class GreenhouseConnector(BaseConnector):
         careers_url = company.get("careers_url", "").rstrip("/")
         if not careers_url:
             return []
-        # BUGFIX: use the context manager so the connection pool is closed
-        # when the function returns. The previous build_session() form
-        # leaked one Session per call → dozens of open pools after a scan.
+
         with http_session() as session:
             # Extract board token from careers_url or use explicit ats_board_token field
             token = company.get("ats_board_token") or self._extract_token(careers_url)
@@ -33,6 +31,17 @@ class GreenhouseConnector(BaseConnector):
                 for api in api_candidates:
                     try:
                         r = session.get(api, timeout=30)
+                        # Handle rate limiting with retry
+                        if r.status_code == 429:
+                            import time
+                            retry_after = int(r.headers.get("Retry-After", 5))
+                            logger.info(
+                                "Greenhouse rate-limited on %s, waiting %ds",
+                                api, retry_after,
+                            )
+                            time.sleep(retry_after)
+                            r = session.get(api, timeout=30)
+
                         r.raise_for_status()
                         payload = r.json()
                         jobs = []
@@ -42,6 +51,11 @@ class GreenhouseConnector(BaseConnector):
                                 loc = job.get("location") or {}
                                 location = loc.get("name", "") if isinstance(loc, dict) else str(loc)
                                 url = normalize_url(job.get("absolute_url") or job.get("url") or careers_url)
+                                desc = job.get("content", "") or ""
+                                # Strip HTML from description
+                                if desc and "<" in desc:
+                                    from sponsorscout.connectors.common import strip_html
+                                    desc = strip_html(desc)
                                 jobs.append({
                                     "external_id": str(job.get("id", "")),
                                     "title": job.get("title", ""),
@@ -49,23 +63,45 @@ class GreenhouseConnector(BaseConnector):
                                     "country": company.get("country", ""),
                                     "location": location,
                                     "url": url,
-                                    "description": job.get("content", "") or "",
+                                    "description": desc,
                                     "ats_source": "greenhouse",
                                 })
                             if jobs:
+                                logger.info(
+                                    "Greenhouse: fetched %d jobs for %s via %s",
+                                    len(jobs), company.get("name"), token,
+                                )
                                 return jobs
                     except Exception as exc:
-                        logger.exception("Connector %s error", self.ats_name)
-                        # Fall through: scanner._scan_company turns the empty return
-                        # into an ats_health record_failure() call.
+                        logger.debug(
+                            "Greenhouse API %s failed for %s: %s",
+                            api, company.get("name"), exc,
+                        )
+                        # Continue to next API endpoint
+                        continue
 
-            # Fallback: scrape the careers page HTML
+                # If all API endpoints failed, try the board page directly
+                try:
+                    board_url = f"https://boards.greenhouse.io/{token}"
+                    r = session.get(board_url, timeout=30)
+                    if r.status_code == 200:
+                        jobs = parse_links_from_html(r.text, board_url, company["name"])
+                        if jobs:
+                            logger.info(
+                                "Greenhouse: scraped %d jobs from board page for %s",
+                                len(jobs), company.get("name"),
+                            )
+                            return jobs
+                except Exception as exc:
+                    logger.debug("Greenhouse board page scrape failed for %s: %s", company.get("name"), exc)
+
+            # Final fallback: scrape the careers page HTML
             try:
                 r = session.get(careers_url, timeout=30)
                 r.raise_for_status()
                 return parse_links_from_html(r.text, careers_url, company["name"])
             except Exception as exc:
-                logger.exception("Connector %s error", self.ats_name)
+                logger.debug("Greenhouse HTML fallback failed for %s: %s", company.get("name"), exc)
                 return []
 
     def _extract_token(self, url: str) -> str:
@@ -73,10 +109,26 @@ class GreenhouseConnector(BaseConnector):
         - boards.greenhouse.io/{token}
         - job-boards.greenhouse.io/{token}
         - {company}.greenhouse.io  (sometimes)
+        - www.hubspot.com/careers/jobs/all?page=1 → try hubspot as token
         """
         # Direct board URL: boards.greenhouse.io/stripe
         m = re.search(r"(?:boards|job-boards)\.greenhouse\.io/([^/?#]+)", url)
         if m:
             return m.group(1)
-        # Sometimes careers URL is custom domain — can't extract token, fall through to HTML
+
+        # Custom domain: try to extract company name from hostname
+        # e.g., careers.hubspot.com → hubspot
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname or ""
+            # Remove common prefixes
+            company_name = hostname.replace("careers.", "").replace("jobs.", "").replace("www.", "")
+            # Remove TLD
+            company_name = company_name.split(".")[0] if "." in company_name else company_name
+            if company_name and len(company_name) >= 2:
+                return company_name
+        except Exception:
+            pass
+
         return ""

@@ -136,7 +136,7 @@ def _scan_company(company, db_path=DB_PATH, on_progress=None):
 
     # 2. Decide which ATS to use as fallback when careers scrape was empty.
     # Priority: detected ATS (from links on the careers page) > expected ATS
-    # (from CSV) > official_careers (re-scrape the URL via connector).
+    # (from CSV) > official_careers (enhanced retry via connector).
     if detected_ats:
         ats_to_use = detected_ats
         company["ats_board_token"] = detected_token
@@ -148,9 +148,8 @@ def _scan_company(company, db_path=DB_PATH, on_progress=None):
     elif expected_ats and expected_ats != "official_careers" and expected_ats != "unknown":
         ats_to_use = expected_ats
     else:
-        # Re-scrape via the connector - makes sure CSV careers_url gets
-        # exercised with full Playwright fallback even if the first pass
-        # returned 0 (which usually means JS-rendering was unavailable).
+        # Use the official_careers connector which has enhanced retry logic
+        # (longer waits, sub-path probing, broader Playwright strategies).
         ats_to_use = "official_careers"
 
     company["ats_type"] = ats_to_use
