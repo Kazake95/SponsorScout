@@ -8,7 +8,6 @@ Fully local. No accounts. No cloud. Data stays on your machine in a SQLite datab
 
 ## Features
 
-- **Background mode** — minimize to system tray and keep scanning silently
 - **17 ATS connectors** — Greenhouse, Lever, Ashby, Workable, Workday, Personio, Recruitee, BambooHR, SmartRecruiters, Teamtailor, Jobvite, iCIMS, Homerun, Freshteam, Breezy, Welcome to the Jungle, Manatal
 - **Official careers fallback** — probes company career pages when no known ATS API exists
 - **Portal discovery engine** — auto-finds career pages via search + embedded ATS link detection
@@ -75,18 +74,6 @@ sponsorscout
 # or
 python -m sponsorscout.main
 ```
-
-**Background mode (system tray):**
-
-```bash
-sponsorscout --background
-# or
-python -m sponsorscout.main --background
-```
-
-The app minimizes to the system tray and keeps running in the background. Right-click the tray icon to restore the window or quit.
-
-Requires the `pystray` package (included in `requirements.txt`). On Linux you may also need `python3-appindicator` or `libappindicator-gtk3` for tray support.
 
 ---
 
@@ -382,7 +369,7 @@ sponsorscout/
 │   └── diagnose_scan.py     # Diagnostic tool for scan issues
 │
 ├── ui/
-│   ├── app.py              # Full tkinter GUI (tabs, system tray, header)
+│   ├── app.py              # Full tkinter GUI (tabs, header)
 │   └── tabs/               # Tab modules
 │
 ├── data/

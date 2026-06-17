@@ -53,9 +53,9 @@ RestartApplications=no
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; With --onefile PyInstaller build, only the single .exe and icon need copying.
-Source: "dist\SponsorScout-InstallerFiles\SponsorScout.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\SponsorScout-InstallerFiles\sponsorscout.ico"; DestDir: "{app}"; Flags: ignoreversion
+; With --onedir PyInstaller build, the entire build directory is copied.
+; Recurse into subdirs and create all subdirectories at install time.
+Source: "dist\SponsorScout-InstallerFiles\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIcoName}"
@@ -78,8 +78,8 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im SponsorScout.exe"; Flags: ru
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im Sponsorscout.exe"; Flags: runhidden runminimized skipifdoesntexist
 
 [UninstallDelete]
-; Remove the installed app (.exe + icon)
-Type: files; Name: "{app}\*"
+; Remove the entire installed app directory (exe, DLLs, subdirs, etc.)
+Type: filesandordirs; Name: "{app}"
 ; Remove the user data directory (DB, logs, profiles, locale, CV)
 Type: filesandordirs; Name: "{userappdata}\SponsorScout"
 ; Remove any Playwright browser cache downloaded at first run

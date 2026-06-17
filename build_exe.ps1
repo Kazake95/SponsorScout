@@ -57,12 +57,11 @@ if (Test-Path $DistDir) {
     --clean `
     --noconfirm `
     --windowed `
-    --onefile `
+    --onedir `
     --name $AppName `
     --icon sponsorscout/data/sponsorscout.ico `
     --collect-data sponsorscout `
     --collect-submodules sponsorscout `
-    --collect-submodules playwright `
     --collect-submodules google `
     --collect-submodules google.generativeai `
     --collect-submodules openai `
@@ -77,7 +76,7 @@ if (-not (Test-Path $ExePath)) {
 }
 Write-Host "Built $ExePath (version $Version)" -ForegroundColor Green
 
-# Prepare installer source directory with the single .exe and icon.
+# Prepare installer source directory with the entire onedir build output.
 # Playwright's Chromium is NOT bundled — it downloads at first run to
 # %LOCALAPPDATA%\ms-playwright automatically when the app calls
 # playwright.sync_api.sync_playwright().
@@ -85,9 +84,14 @@ $InstallerSrcDir = Join-Path $DistDir "$AppName-InstallerFiles"
 if (Test-Path $InstallerSrcDir) {
     Remove-Item -Recurse -Force $InstallerSrcDir
 }
-New-Item -ItemType Directory -Path $InstallerSrcDir -Force | Out-Null
-Copy-Item -Path $ExePath -Destination $InstallerSrcDir
-Copy-Item -Path (Join-Path $Root 'sponsorscout\data\sponsorscout.ico') -Destination $InstallerSrcDir -Force
+Copy-Item -Path $BuildDir -Destination $InstallerSrcDir -Recurse -Force
+# Remove any _playwright directory that PyInstaller may have collected —
+# Chromium is not bundled with the installer; it downloads to
+# %LOCALAPPDATA%\ms-playwright at runtime.
+$PlaywrightInBundle = Join-Path $InstallerSrcDir '_playwright'
+if (Test-Path $PlaywrightInBundle) {
+    Remove-Item -Recurse -Force $PlaywrightInBundle
+}
 
 # Step 4: Build Inno Setup installer if ISCC.exe is available
 $Iscc = $null
