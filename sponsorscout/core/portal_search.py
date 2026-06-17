@@ -109,6 +109,7 @@ NAV_TITLE_BLACKLIST = {
     "education",
     # Company about / general nav pages
     "company", "our story", "our people", "our locations",
+    "locations", "teams", "our teams", "departments",
     "supported countries", "trust center", "work with us",
     "book a demo", "book demo", "live demo", "idv live demo",
     "contact sales", "demo",
@@ -1098,18 +1099,15 @@ def _looks_like_job(title: str, url: str, text: str, full_page_text: str = "") -
     if title_lower in junk_titles:
         return False
 
-    if ATS_LINK_RE.search(url):
-        return True
-
-    if JOB_URL_RE.search(url):
-        return True
-
-    if JOB_ID_URL_RE.search(urlparse(url).path):
-        return True
-
-
-    # ── Noise filtering: reject navigation links, social links, etc. ──
-    title_lower = title.lower().strip()
+    # ── Noise filtering FIRST: reject navigation links, social links, company
+    # "about/culture" pages, etc. based on the link's own text. This MUST run
+    # before the URL-pattern shortcuts below: broad keywords like "careers"
+    # or "jobs" appear in nearly every path on a careers site — including
+    # non-job nav pages such as "/careers/life-at-bolt", "/careers/locations"
+    # or "/careers/teams" — so checking the URL first would short-circuit on
+    # those keywords and accept the page as a "job" before the title
+    # blacklist ever got a chance to reject it (the bug that let pages like
+    # "Diversity and Inclusion" or "Life at Bolt" show up as job results).
     # Check against navigation title blacklist
     if title_lower in NAV_TITLE_BLACKLIST:
         return False
@@ -1142,6 +1140,17 @@ def _looks_like_job(title: str, url: str, text: str, full_page_text: str = "") -
     # Skip very short titles that are likely nav items (e.g. "Rides", "Food")
     if len(title_lower) < 5 and not any(kw in title_lower for kw in ROLE_KEYWORDS):
         return False
+
+    # ── URL-pattern shortcuts: only consulted once a link has survived the
+    # title-based noise filters above. ──
+    if ATS_LINK_RE.search(url):
+        return True
+
+    if JOB_URL_RE.search(url):
+        return True
+
+    if JOB_ID_URL_RE.search(urlparse(url).path):
+        return True
 
     low = f"{title} {url} {text}".lower()
 

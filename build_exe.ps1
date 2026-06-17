@@ -57,7 +57,7 @@ if (Test-Path $DistDir) {
     --clean `
     --noconfirm `
     --windowed `
-    --onedir `
+    --onefile `
     --name $AppName `
     --icon sponsorscout/data/sponsorscout.ico `
     --collect-data sponsorscout `
@@ -68,11 +68,6 @@ if (Test-Path $DistDir) {
     --collect-submodules openai `
     --hidden-import google.generativeai `
     --hidden-import openai `
-    --hidden-import pystray `
-    --hidden-import pystray._win32 `
-    --hidden-import pystray._appindicator `
-    --hidden-import pystray._gtk `
-    --hidden-import pystray._xorg `
     --hidden-import PIL `
     --hidden-import PIL._tkinter_finder `
     sponsorscout/main.py
@@ -82,49 +77,16 @@ if (-not (Test-Path $ExePath)) {
 }
 Write-Host "Built $ExePath (version $Version)" -ForegroundColor Green
 
-# Bundle Playwright's Chromium so JS-rendered career pages work out of the box.
-# Without this, the installed app gets 0 jobs from all SPA career portals
-# because Playwright can't find the browser binary. This mirrors the approach
-# in build_deb.sh for Linux.
-Write-Host "[3.5/4] Bundling Playwright Chromium..." -ForegroundColor Cyan
-$PlaywrightBrowsersPath = if ($env:PLAYWRIGHT_BROWSERS_PATH) {
-    $env:PLAYWRIGHT_BROWSERS_PATH
-} else {
-    Join-Path $env:USERPROFILE '.cache\ms-playwright'
-}
-
-# Also check LocalAppData for Playwright browsers
-$localPlaywrightPath = Join-Path $env:LOCALAPPDATA 'ms-playwright'
-$chromiumFound = $false
-
-# Try USERPROFILE cache first, then LOCALAPPDATA
-foreach ($candidate in @($PlaywrightBrowsersPath, $localPlaywrightPath)) {
-    if (Test-Path $candidate) {
-        $chromiumDir = Get-ChildItem -Path $candidate -Directory -Filter 'chromium*' | Select-Object -First 1
-        if ($chromiumDir) {
-            $targetDir = Join-Path $BuildDir '_playwright'
-            if (-not (Test-Path $targetDir)) {
-                New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-            }
-            Write-Host "  Bundling Chromium from $($chromiumDir.FullName)" -ForegroundColor Green
-            Copy-Item -Recurse -Path $chromiumDir.FullName -Destination $targetDir
-            $chromiumFound = $true
-            break
-        }
-    }
-}
-
-if (-not $chromiumFound) {
-    Write-Host "  WARNING: No Chromium directory found for Playwright." -ForegroundColor Yellow
-    Write-Host "  JS-rendered career pages will return 0 jobs on installed systems." -ForegroundColor Yellow
-    Write-Host "  Install Chromium with: playwright install chromium" -ForegroundColor Yellow
-}
-
+# Prepare installer source directory with the single .exe and icon.
+# Playwright's Chromium is NOT bundled — it downloads at first run to
+# %LOCALAPPDATA%\ms-playwright automatically when the app calls
+# playwright.sync_api.sync_playwright().
 $InstallerSrcDir = Join-Path $DistDir "$AppName-InstallerFiles"
 if (Test-Path $InstallerSrcDir) {
     Remove-Item -Recurse -Force $InstallerSrcDir
 }
-Copy-Item -Recurse -Path $BuildDir -Destination $InstallerSrcDir
+New-Item -ItemType Directory -Path $InstallerSrcDir -Force | Out-Null
+Copy-Item -Path $ExePath -Destination $InstallerSrcDir
 Copy-Item -Path (Join-Path $Root 'sponsorscout\data\sponsorscout.ico') -Destination $InstallerSrcDir -Force
 
 # Step 4: Build Inno Setup installer if ISCC.exe is available

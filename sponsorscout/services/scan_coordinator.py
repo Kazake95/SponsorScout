@@ -33,7 +33,9 @@ class ScanCoordinator:
         self.on_progress = on_progress or (lambda msg: print(msg))
         self.on_complete = on_complete or (lambda n: None)
         self._scan_in_progress = threading.Lock()
+        self._cancel_event = threading.Event()
         self._last_run: Optional[float] = None
+        self._was_cancelled = False
 
     def set_on_progress(self, callback: Optional[Callable[[str], None]]) -> None:
         """Replace the progress callback used during scans."""
@@ -49,8 +51,23 @@ class ScanCoordinator:
         return
 
     def stop(self):
-        """No background worker exists to stop."""
-        return
+        """Alias for cancel(). Kept so existing callers (e.g. the window
+        close handler) that expect a stop() method still work."""
+        self.cancel()
+
+    def cancel(self):
+        """Request that the in-progress scan stop after its current company.
+
+        There is no way to safely abort a single in-flight HTTP request
+        without risking a half-written DB record, so cancellation is
+        cooperative: the running scan checks this flag between companies and
+        stops there. Everything found before the stop request is kept.
+        """
+        if self.is_scanning:
+            self._cancel_event.set()
+            self.on_progress(
+                "⏹ Stop requested — finishing the current company, then stopping…"
+            )
 
     def pause(self):
         return
@@ -67,6 +84,12 @@ class ScanCoordinator:
         return self._scan_in_progress.locked()
 
     @property
+    def is_cancelled(self) -> bool:
+        """True if the most recently completed scan was stopped by the user
+        rather than finishing on its own."""
+        return self._was_cancelled
+
+    @property
     def last_run(self) -> Optional[float]:
         return self._last_run
 
@@ -79,6 +102,8 @@ class ScanCoordinator:
         if not self._scan_in_progress.acquire(blocking=False):
             self.on_progress("Scan already in progress; skipping this request.")
             return
+        self._cancel_event.clear()
+        self._was_cancelled = False
         t = threading.Thread(
             target=self._guarded_scan,
             name="SponsorScout-ImmediateScan",
@@ -114,11 +139,18 @@ class ScanCoordinator:
                 db_path=self.db_path,
                 parallel=False,
                 on_progress=_company_progress,
+                cancel_event=self._cancel_event,
             )
             self._last_run = time.time()
-            self.on_progress(
-                f"✅ Scan complete — {len(found)} jobs found across {total} companies."
-            )
+            if self._cancel_event.is_set():
+                self._was_cancelled = True
+                self.on_progress(
+                    f"⏹ Scan stopped by user — {len(found)} jobs found before stopping."
+                )
+            else:
+                self.on_progress(
+                    f"✅ Scan complete — {len(found)} jobs found across {total} companies."
+                )
         except Exception as exc:
             logger.exception("Scan failed")
             self.on_progress(f"Scan error: {exc}")

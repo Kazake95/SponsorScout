@@ -292,15 +292,23 @@ def _scan_company(company, db_path=DB_PATH, on_progress=None):
         time.sleep(delay)
     
 
-def scan_all(companies, discovery_items=None, db_path=DB_PATH, parallel=False, on_progress=None):
+def scan_all(companies, discovery_items=None, db_path=DB_PATH, parallel=False,
+              on_progress=None, cancel_event=None):
     """
     Scan all companies with optional parallel execution.
     Returns list of all job records found.
     on_progress(msg, done, total): called after each company finishes.
+    cancel_event: optional threading.Event — when set, no further companies
+    are started (the company currently in flight is allowed to finish so we
+    never leave a half-written HTTP request or DB write behind). Everything
+    found before the stop request stays saved.
     """
     found = []
     total = len(companies)
     done_count = [0]  # mutable counter for thread-safe increment
+
+    def _cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
 
     def _wrapped(company):
         result = _scan_company(company, db_path, on_progress=on_progress)
@@ -313,7 +321,11 @@ def scan_all(companies, discovery_items=None, db_path=DB_PATH, parallel=False, o
 
     if parallel and total > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(_wrapped, company): company for company in companies}
+            futures = {}
+            for company in companies:
+                if _cancelled():
+                    break
+                futures[executor.submit(_wrapped, company)] = company
             for future in concurrent.futures.as_completed(futures):
                 try:
                     found.extend(future.result())
@@ -321,9 +333,14 @@ def scan_all(companies, discovery_items=None, db_path=DB_PATH, parallel=False, o
                     logger.exception("Parallel scan thread failed: %s", exc)
     else:
         for company in companies:
+            if _cancelled():
+                if on_progress:
+                    on_progress("⏹ Stop requested — not starting further companies.",
+                                 done_count[0], total)
+                break
             found.extend(_wrapped(company))
 
-    if discovery_items:
+    if discovery_items and not _cancelled():
         conn = get_connection(db_path)
         for item in discovery_items:
             try:

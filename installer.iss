@@ -53,14 +53,17 @@ RestartApplications=no
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "dist\SponsorScout-InstallerFiles\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs solid
+; With --onefile PyInstaller build, only the single .exe and icon need copying.
+Source: "dist\SponsorScout-InstallerFiles\SponsorScout.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\SponsorScout-InstallerFiles\sponsorscout.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIcoName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIcoName}"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "PLAYWRIGHT_BROWSERS_PATH"; ValueData: "{app}\_playwright"; Flags: uninsdeletevalue
+; No PLAYWRIGHT_BROWSERS_PATH set — Playwright downloads its browser to
+; %LOCALAPPDATA%\ms-playwright automatically on first use.
 
 [Tasks]
 Name: "desktopicon"; Description: "Create Desktop Shortcut"; GroupDescription: "Additional Icons"; Flags: unchecked
@@ -75,12 +78,14 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im SponsorScout.exe"; Flags: ru
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im Sponsorscout.exe"; Flags: runhidden runminimized skipifdoesntexist
 
 [UninstallDelete]
-; Remove the entire install directory tree (PyInstaller _internal + all subdirs)
-Type: filesandordirs; Name: "{app}\*"
-; Remove the user data directory (DB, logs, profiles, locale)
+; Remove the installed app (.exe + icon)
+Type: files; Name: "{app}\*"
+; Remove the user data directory (DB, logs, profiles, locale, CV)
 Type: filesandordirs; Name: "{userappdata}\SponsorScout"
-; Remove the Playwright registry value
-Type: filesandordirs; Name: "{app}\_playwright"
+; Remove any Playwright browser cache downloaded at first run
+Type: filesandordirs; Name: "{localappdata}\ms-playwright"
+; Remove any SponsorScout data in local app data
+Type: filesandordirs; Name: "{localappdata}\SponsorScout"
 
 [Code]
 const

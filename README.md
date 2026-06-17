@@ -1,27 +1,40 @@
-# SponsorScout v0.1.1
+# SponsorScout
 
-A local desktop tool that scans official ATS job boards and company career portals, detects visa sponsorship / relocation signals, and helps international candidates focus on EU-friendly roles.
+A privacy-first desktop tool for discovering visa-sponsoring jobs in Europe. Scans 17 ATS platforms and company career portals, detects sponsorship and relocation signals, and helps international candidates focus on EU-friendly roles.
 
-No cloud backend. No accounts. Data stays on your machine in a local SQLite database.
+Fully local. No accounts. No cloud. Data stays on your machine in a SQLite database.
 
-**New in v0.1.1:** Italian language support, AI-powered CV & cover letter tailoring with any model, provider-agnostic AI backend (Gemini, OpenAI, OpenRouter, Groq, NVIDIA NIM, Ollama, and more).
+---
+
+## Features
+
+- **Background mode** — minimize to system tray and keep scanning silently
+- **17 ATS connectors** — Greenhouse, Lever, Ashby, Workable, Workday, Personio, Recruitee, BambooHR, SmartRecruiters, Teamtailor, Jobvite, iCIMS, Homerun, Freshteam, Breezy, Welcome to the Jungle, Manatal
+- **Official careers fallback** — probes company career pages when no known ATS API exists
+- **Portal discovery engine** — auto-finds career pages via search + embedded ATS link detection
+- **Sponsorship scoring** — keyword-based scoring with EU Blue Card and relocation detection
+- **Application tracker** — track job application status (Applied, Interview, Offer, Rejected)
+- **AI-assisted tools** — job rating, CV tailoring, and cover letter generation via browser-based copy-paste (no API keys required)
+- **Search objectives** — preset filters: Balanced, Strict Quality, Visa Sponsor, Local EU, Remote EMEA, Blue Card
+- **Internationalisation** — English and Italian, switchable from the header dropdown
+- **Fully local data** — SQLite database with WAL mode, stored in your user data directory
 
 ---
 
 ## Requirements
 
-- Python 3.10 or later
+- Python 3.10 or later (tested on 3.10–3.13)
 - pip
 - tkinter (standard with Python on Windows and macOS; on Ubuntu/Debian: `sudo apt install python3-tk`)
 
 ---
 
-## Installation
+## Quick Start
 
 ### 1. Clone or unzip
 
 ```bash
-unzip SponsorScout_v0.1.1.zip
+git clone https://github.com/Kazake95/SponsorScout_Final_Build_Ready.git
 cd SponsorScout
 ```
 
@@ -31,60 +44,78 @@ cd SponsorScout
 pip install -r requirements.txt
 ```
 
-Or install as a package (gives you the `sponsorscout` and `sponsorscout-scan` CLI commands):
+Or install as a package (gives you CLI commands):
 
 ```bash
 pip install -e .
 ```
 
----
-
-## Running the app
+### 3. Launch
 
 ```bash
 python -m sponsorscout.main
 ```
 
-Or if you installed with `pip install -e .`:
+Or if installed with `pip install -e .`:
 
 ```bash
 sponsorscout
 ```
 
-On first launch you will be prompted to run an initial scan. Click **Yes** to fetch live jobs from the curated registry through official ATS APIs and robust company-portal discovery. Takes 1–3 minutes for the default registry.
+On first launch you'll be prompted to run an initial scan. Click **Yes** to fetch live jobs from the curated registry. Takes 1–3 minutes for the default registry.
 
 ---
 
-## CLI usage
+## Running the App
 
-Scan all companies (sequential):
+**GUI mode:**
 
 ```bash
+sponsorscout
+# or
+python -m sponsorscout.main
+```
+
+**Background mode (system tray):**
+
+```bash
+sponsorscout --background
+# or
+python -m sponsorscout.main --background
+```
+
+The app minimizes to the system tray and keeps running in the background. Right-click the tray icon to restore the window or quit.
+
+Requires the `pystray` package (included in `requirements.txt`). On Linux you may also need `python3-appindicator` or `libappindicator-gtk3` for tray support.
+
+---
+
+## CLI Commands
+
+### Scan companies
+
+```bash
+# Scan all companies sequentially
+sponsorscout-scan
+# or
 python -m sponsorscout.scripts.run_scan
+
+# Parallel scan (4 workers, faster)
+sponsorscout-scan --parallel
+
+# Scan and deduplicate
+sponsorscout-scan --parallel --dedup
+
+# Scan a single company
+sponsorscout-scan --company "Adyen"
 ```
 
-Parallel scan (faster, 4 workers):
-
-```bash
-python -m sponsorscout.scripts.run_scan --parallel
-```
-
-Scan and remove duplicates in one step:
-
-```bash
-python -m sponsorscout.scripts.run_scan --parallel --dedup
-```
-
-Scan a single company:
-
-```bash
-python -m sponsorscout.scripts.run_scan --company "Adyen"
-```
+### Discovery mode
 
 Discover extra company portals before scanning:
 
 ```bash
-python -m sponsorscout.scripts.run_scan \
+sponsorscout-scan \
   --discover "data analyst" \
   --country Germany \
   --domain example.com \
@@ -94,17 +125,135 @@ python -m sponsorscout.scripts.run_scan \
   --parallel
 ```
 
-Discovery combines curated ATS probing, supplied company domains/careers URLs, embedded ATS-link detection, robust HTML career-page extraction, and search fallbacks across Google, DuckDuckGo, and EU-oriented engines. Use `--domain` multiple times when expanding EU company coverage.
+Use `--domain` multiple times when expanding EU company coverage.
 
-Import additional companies from a CSV:
+`--search-engine` accepts `all`, `eu`, or a comma-separated list from:
+`google`, `duckduckgo`, `startpage`, `qwant`, `ecosia`, `mojeek`, `swisscows`.
+
+The `eu` shortcut uses Startpage, Qwant, Ecosia, Mojeek, and Swisscows.
+
+### Import companies
 
 ```bash
+# Import from CSV
+sponsorscout-import path/to/companies.csv
+# or
 python -m sponsorscout.scripts.import_companies path/to/companies.csv
+```
+
+### Diagnose a scan
+
+```bash
+python -m sponsorscout.scripts.diagnose_scan
+```
+
+### Expanded registry
+
+Set `SPONSORSCOUT_LOAD_EXPANDED=1` to include the expanded company registry:
+
+```bash
+SPONSORSCOUT_LOAD_EXPANDED=1 sponsorscout-scan --parallel
 ```
 
 ---
 
-## Adding your own companies
+## Windows Installation
+
+Windows users get a **proper setup wizard** built with Inno Setup.
+
+### Build the installer (developer)
+
+Prerequisites:
+
+- **Windows 10/11** (64-bit)
+- **Python 3.10+** from [python.org](https://www.python.org/downloads/windows/) (tick "Add python.exe to PATH")
+- **PowerShell 5+**
+- **Inno Setup 6+** from [jrsoftware.org](https://jrsoftware.org/isdl.php) (add `ISCC.exe` to PATH)
+
+```powershell
+cd path\to\SponsorScout
+.\build_exe.ps1
+```
+
+The script installs dependencies, runs tests, builds with PyInstaller, and compiles the Inno Setup installer.
+
+### Install (end user)
+
+1. Download `sponsorscout-<version>-setup.exe`.
+2. Double-click to launch the wizard.
+3. Accept the license, choose the install location (default: `C:\Program Files\SponsorScout`), and finish.
+4. The app launches automatically.
+
+The installer:
+
+- Creates `%APPDATA%\SponsorScout` for user data
+- Adds Start Menu and optional Desktop shortcuts
+- Registers in "Apps & Features" for clean uninstall
+
+### Uninstall
+
+**Settings → Apps → Apps & features → SponsorScout → Uninstall**
+
+This removes:
+
+- Program Files directory
+- Start Menu and Desktop shortcuts
+- Registry entries
+- **All user data** in `%APPDATA%\SponsorScout` (database, profiles, logs)
+
+> ⚠️ Uninstalling removes all local data permanently. Back up anything you need first.
+
+### Notes
+
+- **SmartScreen warning**: Unsigned installer triggers "Windows protected your PC." Click **More info** → **Run anyway**. Sign the binary with a code-signing certificate to eliminate this.
+- **Antivirus false positives**: PyInstaller binaries are occasionally flagged. Submit a false-positive report to your AV vendor.
+- **Path with spaces**: Always OK — the app uses absolute internal paths.
+- **tkinter on Windows**: Bundled with the official python.org installer. No extra steps.
+
+---
+
+## Linux Installation
+
+### Debian/Ubuntu package
+
+```bash
+./build_deb.sh
+```
+
+Creates `dist/sponsorscout_<version>_amd64.deb`, installs to `/opt/sponsorscout/`, launcher at `/usr/bin/sponsorscout`.
+
+### Source install
+
+```bash
+pip install .
+```
+
+---
+
+## AI Features
+
+SponsorScout includes AI-assisted tools for job rating, CV tailoring, and cover letter generation.
+
+### Browser-based workflow (no API keys needed)
+
+The default workflow uses web-based AI chat sites:
+
+1. Go to **Tools** → **AI Settings** and select your preferred chat site (ChatGPT, Gemini, Claude, Mistral, or Perplexity).
+2. Select a job in Search → click **Rate this job**. The app builds a prompt and opens the chat site in your browser.
+3. Copy the prompt, paste it into the chat, and paste the AI's response back into SponsorScout.
+4. Same workflow for **CV Tailoring** and **Cover Letter** generation.
+
+### API-based workflow (optional)
+
+If you prefer direct API calls, SponsorScout also supports Google Gemini and OpenAI-compatible endpoints. Set your API key in **Tools** → **AI Settings** to enable the API buttons.
+
+### Customisable prompts
+
+All prompts (job rating, CV tailoring, cover letter) are customisable in the AI Settings tab. You can also set a **Base Cover Letter Template** as a style reference for future generations.
+
+---
+
+## Adding Your Own Companies
 
 Edit `sponsorscout/data/company_registry_seed.csv` and add a row:
 
@@ -130,77 +279,123 @@ Monzo,United Kingdom,greenhouse,https://boards.greenhouse.io/monzo,monzo,...
 | Jobvite | `jobs.jobvite.com/{token}` | leave blank |
 | iCIMS | custom per client | leave blank |
 
-For `ats_type` use one of: `greenhouse`, `lever`, `ashby`, `workable`, `workday`, `personio`, `recruitee`, `bamboohr`, `smartrecruiters`, `teamtailor`, `jobvite`, `icims`, `homerun`, `freshteam`, `breezy`, `welcometothejungle`, `manatal`, `official_careers`.
-
-Use `official_careers` when no known ATS API exists. The fallback now probes common paths like `/careers`, `/jobs`, `/open-positions`, detects embedded ATS board links, and extracts likely job cards with role/country/sponsorship/remote filters.
+Use `official_careers` as the `ats_type` when no known ATS API exists. The fallback probes common paths (`/careers`, `/jobs`, `/open-positions`), detects embedded ATS board links, and extracts likely job cards with role/country/sponsorship/remote filters.
 
 ---
 
-## Project structure
+## Search Objectives
+
+The Search tab includes objective presets to keep results narrow and high-signal:
+
+| Preset | Description |
+|--------|-------------|
+| Balanced | Default mix of match quality and breadth |
+| Strict quality | Tighter skill and title matching |
+| Visa sponsor | Prioritises explicit sponsorship signals |
+| Local EU | Focuses on EU-based roles |
+| Remote EMEA | Includes remote positions across EMEA |
+| Blue Card focus | Targets EU Blue Card-eligible roles |
+
+These presets filter the same shared database, so you can switch between job-search goals without rescanning.
+
+---
+
+## Application Tracker
+
+The Applications tab lets you track the status of jobs you've applied to:
+
+- **Applied** — you've submitted an application
+- **Interview** — interview stage
+- **Offer** — received an offer
+- **Rejected** — application was rejected
+
+Filter, sort, and manage your application pipeline from one place.
+
+---
+
+## Project Structure
 
 ```
 sponsorscout/
-├── connectors/        # One file per ATS — fetch_jobs() returns list of job dicts
-│   ├── __init__.py    # CONNECTORS registry + get_connector()
+├── connectors/          # One file per ATS — fetch_jobs() returns job dicts
+│   ├── __init__.py      # Connector registry + get_connector()
+│   ├── base.py          # Base connector class
+│   ├── common.py        # Shared helpers
 │   ├── greenhouse.py
 │   ├── lever.py
 │   ├── ashby.py
+│   ├── workable.py
 │   ├── workday.py
 │   ├── personio.py
 │   ├── teamtailor.py
 │   ├── smartrecruiters.py
 │   ├── bamboohr.py
 │   ├── recruitee.py
-│   ├── workable.py
 │   ├── jobvite.py
 │   ├── icims.py
+│   ├── homerun.py
+│   ├── freshteam.py
+│   ├── breezy.py
+│   ├── welcometothejungle.py
+│   ├── manatal.py
 │   └── official_careers.py  # HTML fallback for custom career pages
 │
 ├── core/
-│   ├── scanner.py           # Orchestrates scans (sequential + parallel)
-│   ├── sponsorship.py       # Keyword scoring, EU Blue Card, relocation detection
-│   ├── portal_search.py     # Robust company careers portal probing/extraction
-│   ├── normalizer.py        # Country/title/location normalisation
-│   ├── dedup.py             # Fingerprint-based job and company deduplication
-│   ├── discovery_engine.py  # Auto-find companies via search + ATS fingerprinting
-│   ├── verification.py      # mark_verified / mark_expired helpers
-│   ├── verification_service.py  # HTTP liveness checker (14 dead-job phrases)
-│   ├── persistence.py       # upsert_job, save_company, mark_job_expired
-│   ├── scoring.py           # Match score vs. user profile
-│   ├── http_client.py       # requests Session with retry + UA
-│   └── url_normalizer.py    # Strip tracking params, normalise URLs
+│   ├── scanner.py              # Orchestrates scans (sequential + parallel)
+│   ├── discovery_engine.py     # Auto-find companies via search + ATS fingerprinting
+│   ├── portal_search.py        # Company career page probing/extraction
+│   ├── sponsorship.py          # Keyword scoring, EU Blue Card, relocation detection
+│   ├── scoring.py              # Match score vs. user profile
+│   ├── ats_detection.py        # Detect embedded ATS links on career pages
+│   ├── normalizer.py           # Country/title/location normalisation
+│   ├── location_country.py     # Country detection from text
+│   ├── dedup.py                # Fingerprint-based job and company deduplication
+│   ├── persistence.py          # upsert_job, save_company, mark_job_expired
+│   ├── verification.py         # mark_verified / mark_expired helpers
+│   ├── verification_service.py # HTTP liveness checker (dead-job phrase detection)
+│   ├── http_client.py          # requests Session with retry + UA
+│   └── url_normalizer.py       # Strip tracking params, normalise URLs
 │
 ├── db/
-│   ├── schema.sql     # Full schema (applied on initialize())
-│   └── database.py    # All SQL queries: search, stats, discovery queue, etc.
+│   ├── database.py          # All SQL queries: search, stats, discovery queue, etc.
+│   ├── schema.sql           # Full schema (applied on initialize())
+│   └── migrate_countries.py # Country migration helper
 │
 ├── models/
-│   └── job.py         # Job dataclass
+│   └── job.py              # Job dataclass
 │
 ├── services/
-│   ├── scan_coordinator.py   # Foreground scan coordinator (one-shot worker thread)
-│   ├── ats_health.py          # Record success/failure per ATS connector
-│   ├── browser_fetcher.py     # Lightweight HTTP page fetcher (no browser needed)
-│   ├── country_config.py      # Ordered country list from profile JSON
-│   ├── profile.py             # Loads default_profile.json
-│   ├── registry_loader.py     # Reads company_registry_seed.csv
-│   └── source_policy.py       # Classifies job source (verified vs discovery)
+│   ├── scan_coordinator.py  # Foreground scan coordinator (one-shot worker thread)
+│   ├── ai_rating.py         # Prompt builders and response parsers for AI tools
+│   ├── ai_webview.py        # Opens ChatGPT/Gemini/Claude/Mistral/Perplexity in browser
+│   ├── ats_health.py        # Track success/failure per ATS connector
+│   ├── browser_fetcher.py   # HTTP page fetcher with HTML parsing
+│   ├── country_config.py    # Ordered country list from profile JSON
+│   ├── objectives.py        # Search objective presets (Balanced, Visa Sponsor, etc.)
+│   ├── profile.py           # Loads default_profile.json
+│   ├── registry_loader.py   # Reads company_registry_seed.csv
+│   └── source_policy.py     # Classifies job source (verified vs discovery)
 │
 ├── scripts/
-│   ├── run_scan.py         # CLI: --parallel --dedup --company
-│   └── import_companies.py # CLI: import CSV of companies
+│   ├── run_scan.py          # CLI: --parallel --dedup --company --discover
+│   ├── import_companies.py  # CLI: import CSV of companies
+│   └── diagnose_scan.py     # Diagnostic tool for scan issues
 │
 ├── ui/
-│   └── app.py    # Full tkinter GUI (search, dashboard, tools, health)
-│
-├── i18n.py            # Internationalisation: translation dicts + locale persistence
+│   ├── app.py              # Full tkinter GUI (tabs, system tray, header)
+│   └── tabs/               # Tab modules
 │
 ├── data/
-│   ├── company_registry_seed.csv  # Curated companies with ATS tokens
-│   ├── company_registry_expanded.csv # Optional expanded EU/company portal registry
-│   ├── default_profile.json       # User matching profile (skills, titles, countries)
-│   └── country_profile.json       # EU priority tiers for scoring
+│   ├── company_registry_seed.csv      # Curated companies with ATS tokens
+│   ├── company_registry_expanded.csv  # Optional expanded registry
+│   ├── default_profile.json           # User matching profile (skills, titles, countries)
+│   ├── country_profile.json           # EU priority tiers for scoring
+│   ├── sponsorscout.ico               # App icon
+│   ├── sponsorscout.png               # App icon
+│   └── icons/                         # Multi-size icons for system tray
 │
+├── i18n.py        # Internationalisation: translation dicts + locale persistence
+├── paths.py       # Data directory and file path resolution
 └── main.py        # Entry point → ui/app.py:main()
 
 tests/             # pytest suite
@@ -208,7 +403,7 @@ tests/             # pytest suite
 
 ---
 
-## Customising your match profile
+## Customising Your Match Profile
 
 Edit `sponsorscout/data/default_profile.json`:
 
@@ -224,7 +419,7 @@ Match scores update on the next scan.
 
 ---
 
-## Supported ATS connectors
+## Supported ATS Connectors
 
 | ATS | Method | Public API? |
 |---|---|---|
@@ -240,173 +435,62 @@ Match scores update on the next scan.
 | Teamtailor | `GET {company}.teamtailor.com/jobs.json` | ⚠️ Partial (no auth) |
 | Jobvite | `GET jobs.jobvite.com/{slug}/feed?format=json` | ⚠️ Partial |
 | iCIMS | HTML fallback (no standard public API) | ❌ Varies per client |
-| Homerun / Freshteam / Breezy / WTTJ / Manatal | Connector-specific public or HTML endpoints | ⚠️ Varies |
+| Homerun | Connector-specific endpoints | ⚠️ Varies |
+| Freshteam | Connector-specific endpoints | ⚠️ Varies |
+| Breezy | Connector-specific endpoints | ⚠️ Varies |
+| Welcome to the Jungle | Connector-specific endpoints | ⚠️ Varies |
+| Manatal | Connector-specific endpoints | ⚠️ Varies |
 | official_careers | Multi-path portal crawler + embedded ATS detection | — |
 
-The `official_careers` fallback is intentionally broad so it does not miss relevant EU roles hidden behind custom company portals. It extracts likely job cards, skips social/legal/noise links, and applies the same remote/sponsorship keyword logic used by the main search filters.
+The `official_careers` fallback probes common career-page paths, detects embedded ATS board links, and extracts likely job cards with role/country/sponsorship/remote filters. It's used when no known ATS API is available.
 
 ---
 
+## Data & Privacy
 
-## Search objectives
+Everything is stored locally on your machine:
 
-The Search tab includes objective presets to keep results narrow and high-signal:
+| Platform | Location |
+|----------|----------|
+| Linux / macOS | `~/.sponsorscout` |
+| Windows | `%APPDATA%\SponsorScout` |
 
-- Balanced
-- Strict quality
-- Visa sponsor
-- Local EU
-- Remote EMEA
-- Blue Card focus
+The data directory contains:
 
-These presets tighten the same backend dataset rather than deleting records, so you can keep one shared database and switch between job-search goals as needed.
+- `sponsorscout.db` — SQLite database (WAL mode) with all jobs, companies, and scan history
+- `default_profile.json` — your matching profile
+- `locale.json` — language preference
+- `ai_prompts.json` — customised AI prompt templates
 
-## Discovery and filters
+**No telemetry. No accounts. No cloud sync.**
 
-Search results can be filtered by:
-
-- Country, with EU/EMEA remote jobs included where relevant.
-- Sponsorship score, EU Blue Card, and relocation support.
-- Remote type: EU, EMEA, global, remote-only, or hybrid.
-- Experience level inferred from job title.
-- Sort mode: best match, latest, or sponsored first.
-
-Discovery filters are available from the CLI:
+Set a custom location:
 
 ```bash
-python -m sponsorscout.scripts.run_scan --discover "analytics engineer" --country Netherlands
-python -m sponsorscout.scripts.run_scan --domain https://company.example/careers --sponsorship-only
-python -m sponsorscout.scripts.run_scan --domain example.com --remote-filter "Remote EMEA"
-python -m sponsorscout.scripts.run_scan --discover "data engineer" --search-engine google
-python -m sponsorscout.scripts.run_scan --discover "data analyst" --search-engine eu
+export SPONSORSCOUT_DATA_DIR=/custom/path
+# or
+export SPONSORSCOUT_DB_PATH=/custom/path/sponsorscout.db
 ```
 
-`--search-engine` accepts `all`, `eu`, or a comma-separated list from:
-`google`, `duckduckgo`, `startpage`, `qwant`, `ecosia`, `mojeek`, `swisscows`.
-The `eu` shortcut uses Startpage, Qwant, Ecosia, Mojeek, and Swisscows.
-
-Set `SPONSORSCOUT_LOAD_EXPANDED=1` before running a scan to include `company_registry_expanded.csv`:
-
-```bash
-SPONSORSCOUT_LOAD_EXPANDED=1 python -m sponsorscout.scripts.run_scan --parallel
-```
-
-Developer expansion details are in [docs/backend_expansion.md](docs/backend_expansion.md).
+Delete the data directory to reset completely.
 
 ---
 
-## Data stays local
+## Internationalisation
 
-- Everything mutable is stored in your per-user SponsorScout data directory:
-  - **Linux / macOS:** `~/.sponsorscout` by default
-  - **Windows:** `%APPDATA%\SponsorScout` by default
-  - Includes `sponsorscout.db` (SQLite, WAL mode)
-- No telemetry, no accounts, no cloud sync
-- Delete the data directory to reset completely, or set
-  `SPONSORSCOUT_DATA_DIR` / `SPONSORSCOUT_DB_PATH` for a custom location
-
----
-
-## Running tests
-
-```bash
-pip install pytest
-pytest tests/ -q
-```
-
-Expected: **80 passed**.
-
-
-## Windows installation
-
-Windows users get a **proper setup wizard** built with Inno Setup. The installer requires admin rights, places the app into `Program Files`, creates Start Menu / Desktop shortcuts, and manages all user data in `%APPDATA%\SponsorScout`.
-
-### Build the installer (developer side, on a Windows machine)
-
-Prerequisites on the build machine:
-
-- **Windows 10/11** (64-bit)
-- **Python 3.10+** from [python.org](https://www.python.org/downloads/windows/) (tick **"Add python.exe to PATH"** during install)
-- **PowerShell 5+** (already installed on every modern Windows)
-- **Inno Setup 6+** from [jrsoftware.org](https://jrsoftware.org/isdl.php) (add `ISCC.exe` to PATH, or the script will auto-detect it)
-
-In the project root, open PowerShell and run:
-
-```powershell
-cd path\to\SponsorScout
-.\build_exe.ps1
-```
-
-The script will:
-1. Upgrade `pip`
-2. Install `requirements.txt` + `pyinstaller`
-3. Run the test suite (skips on failure)
-4. Run `pyinstaller --onedir --windowed --icon sponsorscout/data/sponsorscout.ico …`
-5. Copy the built directory and assets to `dist\SponsorScout-InstallerFiles\`
-6. Compile `installer.iss` with Inno Setup → `dist\sponsorscout-<version>-setup.exe`
-
-The resulting `sponsorscout-<version>-setup.exe` is the only artifact you need to distribute.
-
-### Install (end user side)
-
-1. Download `sponsorscout-<version>-setup.exe`.
-2. Double-click it. The wizard opens.
-3. Accept the license, choose the install location (default: `C:\Program Files\SponsorScout`), and finish.
-4. The app launches automatically after installation.
-
-The installer automatically:
-- Creates the `%APPDATA%\SponsorScout` user data directory
-- Adds Start Menu and optional Desktop shortcuts
-- Registers the app in "Apps & Features" for clean uninstallation
-
-### Uninstall (completely remove everything)
-
-1. Open **Settings → Apps → Apps & features** (or Control Panel → Programs).
-2. Find **SponsorScout** and click **Uninstall**.
-3. The wizard removes:
-   - Program Files directory (`C:\Program Files\SponsorScout`)
-   - Start Menu and Desktop shortcuts
-   - Windows Registry entries (Add/Remove Programs)
-   - **All user data** in `%APPDATA%\SponsorScout` (SQLite DB, profiles, logs, etc.)
-
-> ⚠️ Uninstalling **removes all local data permanently**. Back up anything you need first.
-
-### Headless / CI builds
-
-`build_exe.ps1` works on any Windows host with Python 3.10+ and Inno Setup. For fully unattended builds:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File build_exe.ps1
-```
-
-The artifact to ship is `dist\sponsorscout-<version>-setup.exe`.
-
-### Common Windows-specific notes
-
-- **SmartScreen warning**: A fresh, unsigned installer triggers "Windows protected your PC" the first time. Click **More info** → **Run anyway**. To eliminate this, sign the binary with a code-signing certificate (`signtool sign /fd SHA256 /a dist\sponsorscout-<version>-setup.exe`).
-- **Antivirus false positives**: PyInstaller binaries are occasionally flagged. Submit a false-positive report to your AV vendor or sign the binary.
-- **Path with spaces**: Always OK — the app uses absolute internal paths.
-- **tkinter on Windows**: Already bundled with the official python.org installer, so PyInstaller picks it up automatically. No extra steps.
-
----
-
-## Internationalisation (i18n)
-
-SponsorScout supports multiple languages via the header dropdown in the top-right corner.
-
-**Currently supported:**
+Switch languages from the dropdown in the top-right corner of the header.
 
 | Locale | Language |
 |--------|----------|
 | `en` | English |
 | `it` | Italiano |
 
-Your language choice is saved to `~/.sponsorscout/locale.json` and restored on next launch.
+Your language choice is saved and restored on next launch.
 
 ### Adding a new language
 
 1. Open `sponsorscout/i18n.py`.
-2. Add a new entry to the `LANGUAGES` dict with your locale code and translated strings:
+2. Add a new entry to the `LANGUAGES` dict:
 
 ```python
 LANGUAGES = {
@@ -416,64 +500,31 @@ LANGUAGES = {
         "Search": "Recherche",
         "Dashboard": "Tableau de bord",
         "Applications": "Candidatures",
-        "ATS Health": "Santé ATS",
-        "Tools": "Outils",
-        "Ready": "Prêt",
         # ... translate all strings
     },
 }
 ```
 
-3. The `_("...")` wrapper in `app.py` automatically picks up the active locale.
-4. The language dropdown in the header updates when the user selects a new language.
+3. The `_("...")` wrapper in the UI automatically picks up the active locale.
 
 ---
 
-## AI Features
+## Running Tests
 
-SponsorScout includes a provider-agnostic AI backend for job rating, CV tailoring, and cover letter generation.
-
-### Supported AI providers
-
-| Provider | API format | Notes |
-|----------|-----------|-------|
-| Google Gemini | `generateContent` REST API | Free tier available; recommended |
-| OpenAI | `/v1/chat/completions` | Requires API key |
-| OpenRouter | `/v1/chat/completions` | Access to many models |
-| Groq | `/v1/chat/completions` | Fast inference |
-| Together AI | `/v1/chat/completions` | Open-source models |
-| NVIDIA NIM | `/v1/chat/completions` | Enterprise models |
-| Ollama | `/v1/chat/completions` | Local/free, no API key needed |
-| Custom endpoint | Any `/v1/chat/completions` compatible | User provides full URL |
-
-### Setting up AI
-
-1. Go to **Tools** → **AI Settings**.
-2. Select your provider (e.g. `gemini`).
-3. Paste your API key → click **Save Key**.
-4. Pick a model from the suggestion chips or type any model name → click **Save**.
-5. Optionally customise the prompts (job rating, CV tailoring, cover letter).
-
-### How AI features work
-
-- **Job Rating**: Select a job in Search → click "Rate this job". The AI rates it 1–10 and gives an eligibility verdict.
-- **CV Tailoring**: Paste your CV once in the AI Tailor tab → select a job → click "Tailor My CV". The AI rewrites your CV for that specific role.
-- **Cover Letter**: Same workflow — click "Write Cover Letter" to generate a personalised letter.
-- **Base Cover Letter Template**: Optional — paste a cover letter you like as a style reference for future generations.
-
-### Provider-specific notes
-
-- **Gemini**: Free tier has rate limits. The app retries automatically on 429 errors with exponential backoff.
-- **Ollama**: Run `ollama serve` locally first. No API key needed.
-- **Custom**: Paste the full chat-completions URL (e.g. `http://localhost:11434/v1/chat/completions`).
+```bash
+pip install pytest
+pytest tests/ -q
+```
 
 ---
 
-## Build packages
+## Build Packages
 
-- Linux .deb: `./build_deb.sh` (creates `dist/sponsorscout_<version>_amd64.deb`, installs to `/opt/sponsorscout/`, launcher at `/usr/bin/sponsorscout`)
-- Windows .exe: `build_exe.ps1` (creates `dist/SponsorScout.exe`, single-file self-contained)
-- Source: `pip install .` or `pip install -e .` (gives you the `sponsorscout` and `sponsorscout-scan` CLI entry points)
+| Platform | Command | Output |
+|----------|---------|--------|
+| Linux .deb | `./build_deb.sh` | `dist/sponsorscout_<version>_amd64.deb` |
+| Windows setup | `.\build_exe.ps1` | `dist\sponsorscout-<version>-setup.exe` |
+| Source | `pip install .` | CLI entry points: `sponsorscout`, `sponsorscout-scan`, `sponsorscout-import` |
 
 ---
 
