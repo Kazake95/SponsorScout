@@ -1,0 +1,783 @@
+"""
+Lightweight page fetcher used by verification and career-page scanning.
+
+It prefers a normal HTTP fetch, then optionally upgrades to a rendered
+browser snapshot via Playwright for JavaScript-heavy pages.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import random
+import re
+import sys
+from typing import Any
+from urllib.parse import urlparse
+
+from sponsorscout.core.http_client import http_session, is_bot_blocked
+
+logger = logging.getLogger(__name__)
+
+_DYNAMIC_HINTS = (
+    "__NEXT_DATA__",
+    "__NUXT__",
+    "__INITIAL_DATA__",
+    "__PRELOADED_STATE__",
+    "window.__DATA__",
+    "window.__APP__",
+    'id="root"',
+    'id="app"',
+    "ng-version",
+    "data-reactroot",
+    "application/ld+json",
+)
+
+_JOB_LISTING_SELECTORS = (
+    "a[href*='/jobs/']",
+    "a[href*='/careers/']",
+    "a[href*='/position/']",
+    "a[href*='/positions/']",
+    "a[href*='/opportunity/']",
+    "a[href*='/job/']",
+    "[data-job-id]",
+    "[data-position-id]",
+    '[class*="job-card"]',
+    '[class*="JobCard"]',
+    '[class*="job-listing"]',
+    '[class*="job-item"]',
+    '[class*="position-card"]',
+    '[class*="vacancy-item"]',
+)
+
+
+def _looks_dynamic(html: str) -> bool:
+    html = html or ""
+    if len(html) < 5000:
+        return True
+    low = html.lower()
+    return any(hint.lower() in low for hint in _DYNAMIC_HINTS)
+
+
+def _looks_like_careers_url(url: str) -> bool:
+    """Heuristic: official career portals usually contain one of these paths."""
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    path = (parsed.path or "").lower()
+    fragment = (parsed.fragment or "").lower()
+    full = path + " " + fragment
+    if not full.strip():
+        return False
+    return any(part in full for part in (
+        "career", "careers",
+        "job", "jobs",
+        "join",
+        "open-roles", "open-positions",
+        "vacanc", "opportunit", "position",
+        "rolle", "stellen", "karriere",
+        "emploi", "poste",
+        "trabajo", "empleo",
+    ))
+
+
+def _extract_title(html: str) -> str:
+    if "<title" not in html.lower():
+        return ""
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
+def _playwright_available() -> bool:
+    """Check if Playwright can be imported, with one-time warning."""
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _apply_stealth_patches(page) -> None:
+    """Apply comprehensive anti-detection patches to the Playwright page."""
+    page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+            enumerable: true,
+            configurable: true
+        });
+        if (navigator.__proto__) {
+            delete navigator.__proto__.webdriver;
+        }
+
+        const makeFakePlugins = () => {
+            const plugins = [
+                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', version: undefined, length: 1},
+                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: 'Portable Document Format', version: undefined, length: 1},
+                {name: 'Native Client', filename: 'internal-nacl-plugin', description: '', version: undefined, length: 2}
+            ];
+            const pluginsObj = {
+                length: 3,
+                item: function(idx) { return plugins[idx] || null; },
+                namedItem: function(name) {
+                    for (let i = 0; i < plugins.length; i++) {
+                        if (plugins[i].name === name) return plugins[i];
+                    }
+                    return null;
+                },
+                refresh: function() {}
+            };
+            for (let i = 0; i < plugins.length; i++) {
+                pluginsObj[i] = plugins[i];
+            }
+            return pluginsObj;
+        };
+
+        Object.defineProperty(navigator, 'plugins', {
+            get: makeFakePlugins,
+            enumerable: true,
+            configurable: true
+        });
+
+        const makeFakeMimeTypes = () => {
+            const mimeTypes = [
+                {type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: navigator.plugins[0]},
+                {type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: navigator.plugins[1]},
+                {type: 'application/x-nacl', suffixes: '', description: 'Native Client module', enabledPlugin: navigator.plugins[2]}
+            ];
+            const mimeObj = {
+                length: 3,
+                item: function(idx) { return mimeTypes[idx] || null; },
+                namedItem: function(name) {
+                    for (let i = 0; i < mimeTypes.length; i++) {
+                        if (mimeTypes[i].type === name) return mimeTypes[i];
+                    }
+                    return null;
+                }
+            };
+            for (let i = 0; i < mimeTypes.length; i++) {
+                mimeObj[i] = mimeTypes[i];
+            }
+            return mimeObj;
+        };
+
+        Object.defineProperty(navigator, 'mimeTypes', {
+            get: makeFakeMimeTypes,
+            enumerable: true,
+            configurable: true
+        });
+
+        window.chrome = {
+            runtime: {
+                OnInstalledReason: {CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update'},
+                OnRestartRequiredReason: {APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic'},
+                PlatformArch: {ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', MIPS64EL: 'mips64el', MIPSEL: 'mipsel', X86_32: 'x86-32', X86_64: 'x86-64'},
+                PlatformNaclArch: {ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', MIPS64EL: 'mips64el', MIPSEL: 'mipsel', MIPSEL64: 'mipsel64', X86_32: 'x86-32', X86_64: 'x86-64', NONE: 'none'},
+                PlatformOs: {ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win'},
+                RequestUpdateCheckStatus: {NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available'},
+                OnConnect: {},
+                OnMessage: {},
+                OnMessageExternal: {},
+                OnConnectExternal: {},
+                sendMessage: function() {},
+                connect: function() {},
+                getManifest: function() { return {}; },
+                getURL: function() { return ''; },
+                csi: function() {},
+                loadTimes: function() { return {}; }
+            },
+            app: {
+                isInstalled: false,
+                InstallState: {DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed'},
+                RunningState: {CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running'}
+            },
+            csi: function() {},
+            loadTimes: function() { return {}; }
+        };
+
+        if (window.Permissions && window.Permissions.prototype) {
+            const origQuery = Permissions.prototype.query;
+            Permissions.prototype.query = function(desc) {
+                if (desc && desc.name === 'notifications') {
+                    return Promise.resolve({state: 'prompt', onchange: null});
+                }
+                if (desc && desc.name === 'midi') {
+                    return Promise.resolve({state: 'prompt', onchange: null});
+                }
+                if (desc && desc.name === 'midi-sysex') {
+                    return Promise.resolve({state: 'prompt', onchange: null});
+                }
+                return origQuery.call(this, desc);
+            };
+        }
+
+        if (window.Notification) {
+            Object.defineProperty(Notification, 'permission', {
+                get: () => 'default',
+                enumerable: true,
+                configurable: true
+            });
+        }
+
+        Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.', enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'productSub', {get: () => '20030107', enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'deviceMemory', {get: () => 8, enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8, enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 0, enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'platform', {get: () => 'Win32', enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'language', {get: () => 'en-US', enumerable: true, configurable: true});
+        Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en'], enumerable: true, configurable: true});
+
+        Object.defineProperty(window, 'outerWidth', {get: () => window.innerWidth, enumerable: true, configurable: true});
+        Object.defineProperty(window, 'outerHeight', {get: () => window.innerHeight, enumerable: true, configurable: true});
+        Object.defineProperty(window, 'devicePixelRatio', {get: () => 1, enumerable: true, configurable: true});
+        if (window.screen) {
+            Object.defineProperty(window.screen, 'availWidth', {get: () => window.innerWidth, enumerable: true, configurable: true});
+            Object.defineProperty(window.screen, 'availHeight', {get: () => window.innerHeight, enumerable: true, configurable: true});
+        }
+
+        Object.defineProperty(document, 'hidden', {get: () => false, enumerable: true, configurable: true});
+        Object.defineProperty(document, 'visibilityState', {get: () => 'visible', enumerable: true, configurable: true});
+    """)
+
+
+def _dismiss_cookie_banners(page) -> int:
+    """Click common cookie accept/dismiss buttons with human-like delays."""
+    cookie_selectors = [
+        'button:has-text("Accept")',
+        'button:has-text("Accept all")',
+        'button:has-text("Allow all")',
+        'button:has-text("Allow cookies")',
+        'button:has-text("I agree")',
+        'button:has-text("Agree")',
+        'button:has-text("Continue")',
+        'button:has-text("Got it")',
+        'button:has-text("OK")',
+        'button:has-text("Yes")',
+        'button:has-text("Understood")',
+        '[class*="cookie"] button',
+        '[class*="consent"] button',
+        '[class*="gdpr"] button',
+        '[class*="privacy"] button',
+        '[id*="cookie"] button',
+        '[id*="consent"] button',
+        '[id*="gdpr"] button',
+        '[aria-label*="cookie"]',
+        '[aria-label*="Cookie"]',
+        '[aria-label*="consent"]',
+        '[aria-label*="Consent"]',
+        'button[data-testid*="cookie"]',
+        'button[data-testid*="consent"]',
+    ]
+    clicked = 0
+    for selector in cookie_selectors:
+        try:
+            btn = page.locator(selector).first
+            if btn and btn.is_visible(timeout=800):
+                # Human-like: scroll to button, pause, then click
+                btn.scroll_into_view_if_needed(timeout=500)
+                page.wait_for_timeout(random.randint(200, 600))
+                btn.click(timeout=1500)
+                page.wait_for_timeout(random.randint(400, 900))
+                clicked += 1
+                logger.debug("Dismissed cookie banner with selector: %s", selector)
+                break
+        except Exception:
+            continue
+    return clicked
+
+
+def _wait_for_job_elements(page, timeout_ms: int = 8000) -> bool:
+    """Wait for job listing elements to appear on the page using a MutationObserver."""
+    import json; selector_js = json.dumps(_JOB_LISTING_SELECTORS)
+    timeout_js = int(timeout_ms)
+
+    race_script = (
+        "(async () => {"
+        "  const selectors = [" + selector_js + "];"
+        "  const racePromise = new Promise((resolve) => {"
+        "    for (const sel of selectors) {"
+        "      if (document.querySelector(sel)) { resolve(true); return; }"
+        "    }"
+        "    const observer = new MutationObserver(() => {"
+        "      for (const sel of selectors) {"
+        "        if (document.querySelector(sel)) {"
+        "          observer.disconnect();"
+        "          resolve(true);"
+        "          return;"
+        "        }"
+        "      }"
+        "    });"
+        "    observer.observe(document.body, { childList: true, subtree: true });"
+        "    setTimeout(() => { observer.disconnect(); resolve(false); }, "
+        + str(timeout_js)
+        + ");"
+        "  });"
+        "  return racePromise;"
+        "})()"
+    )
+
+    try:
+        result = page.evaluate(race_script)
+        if result is True:
+            return True
+    except Exception as exc:
+        logger.debug("wait_for_job_elements race-script failed: %s", exc)
+
+    for selector in _JOB_LISTING_SELECTORS:
+        try:
+            el = page.wait_for_selector(selector, timeout=2000)
+            if el:
+                logger.debug("Found job element with selector: %s", selector)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+_JOB_API_URL_HINTS = re.compile(
+    r"(job|career|position|vacanc|opening|role|posting|requisition|"
+    r"graphql|search|listing|board|"
+    r"api/|/v[12]/|/wp-json|/contentful|"
+    r"recruiting|talent|applicant|"
+    r"workday|greenhouse|lever|ashby|bamboo|personio|teamtailor|"
+    r"smartrecruiters|recruitee|icims|jobvite|freshteam|breezy|homerun|"
+    r"wttj|manatal)",
+    re.I,
+)
+
+_BROAD_API_URL_HINTS = re.compile(
+    r"(/api/|/v[12]/|/graphql|/data/|/rest/|/ws/|\.json$|/feed/|/catalog/)",
+    re.I,
+)
+
+_LOAD_MORE_TEXT_RE = re.compile(
+    r"^(load more|show more|more jobs|more roles|more positions|more results|"
+    r"view more|see more|see all|next|view all|see all roles|show all|"
+    r"mehr laden|mehr anzeigen|alle anzeigen|weitere|näste|nästa|"
+    r"charger plus|voir plus|voir tout|afficher plus|"
+    r"carica altro|mostra altro|vedi tutto|"
+    r"cargar más|ver más|ver todo|mostrar más)\b",
+    re.I,
+)
+
+_ACCORDION_HEADER_SELECTORS = [
+    '[data-accordion] button',
+    '[data-accordion-trigger]',
+    '[class*="accordion"] button',
+    '[class*="Accordion"] button',
+    '[class*="accordion-toggle"]',
+    '[class*="accordion-button"]',
+    '[class*="accordion-item"] > button',
+    '[class*="accordion-trigger"]',
+    '[class*="accordion-header"]',
+    '[role="button"][aria-expanded]',
+    '[aria-expanded="false"]',
+    'details > summary',
+    '[class*="collapse"]',
+    '[class*="Collapse"]',
+    '[class*="expandable"]',
+    '[class*="Expandable"]',
+    '[class*="collapsible"]',
+    '[class*="Collapsible"]',
+    'button[aria-label*="Add"]',
+    'button[aria-label*="expand"]',
+    'button:has-text("+")',
+    'button:has-text("Show details")',
+    'button:has-text("View role")',
+]
+
+_ACCORDION_MAX_CLICKS = 5
+
+
+def _expand_all_accordions(page) -> int:
+    """Click accordion/collapsible headers with human-like pacing."""
+    clicked = 0
+    for selector in _ACCORDION_HEADER_SELECTORS:
+        try:
+            elements = page.locator(selector).all()
+        except Exception:
+            continue
+        for el in elements:
+            if clicked >= _ACCORDION_MAX_CLICKS:
+                break
+            try:
+                if not el.is_visible(timeout=300):
+                    continue
+                try:
+                    aria_expanded = el.get_attribute("aria-expanded")
+                    if aria_expanded == "true":
+                        continue
+                except Exception:
+                    pass
+                # Human-like: scroll, pause, click, pause
+                el.scroll_into_view_if_needed(timeout=500)
+                page.wait_for_timeout(random.randint(300, 800))
+                el.click(timeout=1500)
+                page.wait_for_timeout(random.randint(500, 1200))
+                clicked += 1
+            except Exception:
+                continue
+        if clicked >= _ACCORDION_MAX_CLICKS:
+            break
+    return clicked
+
+
+def _register_json_capture(page, max_items: int = 50, max_bytes: int = 1_000_000) -> list:
+    """Attach a response listener that captures small-ish JSON API payloads."""
+    captured: list = []
+    broad_captured: list = []
+
+    def _on_response(response):
+        try:
+            url = response.url or ""
+            if not url or url.startswith("data:"):
+                return
+            ctype = (response.headers or {}).get("content-type", "")
+            ctype_lower = ctype.lower()
+            is_json_ct = "json" in ctype_lower or "javascript" in ctype_lower
+            is_no_ct = not ctype or ctype_lower.startswith("text/plain")
+
+            is_primary_match = bool(_JOB_API_URL_HINTS.search(url))
+            is_broad_match = bool(_BROAD_API_URL_HINTS.search(url))
+
+            if not is_primary_match and not is_broad_match:
+                return
+            if not is_json_ct and not is_no_ct:
+                return
+
+            body = response.body()
+            if not body or len(body) > max_bytes:
+                return
+
+            decoded = body.decode("utf-8", errors="ignore").strip()
+            if not decoded:
+                return
+
+            if not (decoded.startswith("{") or decoded.startswith("[")):
+                return
+
+            blob = json.loads(decoded)
+            if is_primary_match and len(captured) < max_items:
+                captured.append(blob)
+            elif is_broad_match and len(broad_captured) < max_items:
+                broad_captured.append(blob)
+        except Exception:
+            return
+
+    try:
+        page.on("response", _on_response)
+    except Exception:
+        pass
+
+    return _CaptureResult(captured, broad_captured)
+
+
+class _CaptureResult(list):
+    """Thin wrapper that carries both primary and broad JSON captures."""
+    def __init__(self, primary, broad):
+        super().__init__(primary)
+        self.broad = broad or []
+
+
+def _extract_spa_memory_state(page) -> list:
+    """Extract in-memory SPA state (Apollo, Redux, Nuxt) from the window object."""
+    extraction_script = """
+    () => {
+        const blobs = [];
+        try {
+            if (window.__APOLLO_CLIENT__) {
+                const cache = window.__APOLLO_CLIENT__.cache?.extract?.();
+                if (cache && cache.data) blobs.push(cache.data);
+                if (cache) blobs.push(cache);
+            }
+            if (window.__REDUX_STORE__) blobs.push(window.__REDUX_STORE__.getState());
+            if (window.__NUXT__) blobs.push(window.__NUXT__);
+            if (window.__INITIAL_STATE__) blobs.push(window.__INITIAL_STATE__);
+            if (window.__APP_STATE__) blobs.push(window.__APP_STATE__);
+            if (window.__DATA__) blobs.push(window.__DATA__);
+        } catch (e) {
+            // Fail silently
+        }
+        return blobs;
+    }
+    """
+    try:
+        blobs = page.evaluate(extraction_script)
+        if blobs:
+            logger.debug("Extracted %d in-memory SPA state blobs", len(blobs))
+        return blobs or []
+    except Exception as exc:
+        logger.debug("SPA memory state extraction failed: %s", exc)
+        return []
+
+
+def _scroll_and_expand(page, max_rounds: int = 5) -> None:
+    """Scroll through the page with human-like behavior."""
+    try:
+        last_height = page.evaluate("document.body.scrollHeight")
+    except Exception:
+        return
+
+    for _ in range(max_rounds):
+        # Human-like: scroll in smaller increments with pauses
+        try:
+            scroll_target = random.randint(int(last_height * 0.6), last_height)
+            page.evaluate(f"window.scrollTo(0, {scroll_target});")
+        except Exception:
+            break
+        page.wait_for_timeout(random.randint(800, 1500))
+
+        # Random mouse movement to simulate human behavior
+        try:
+            page.mouse.move(random.randint(100, 800), random.randint(100, 600))
+        except Exception:
+            pass
+
+        try:
+            load_triggers = page.locator(
+                "button:has-text('Load more'), button:has-text('View more'), "
+                "button:has-text('View all'), button:has-text('See all'), "
+                "button:has-text('Show more'), button:has-text('Show all'), "
+                "a:has-text('View all'), a:has-text('See all'), "
+                "a:has-text('Load more'), a:has-text('Show more'), "
+                "button:has-text('Mehr laden'), button:has-text('Mehr anzeigen'), "
+                "button:has-text('Alle anzeigen'), a:has-text('Alle anzeigen')"
+            )
+            if load_triggers.count() > 0 and load_triggers.first.is_visible():
+                load_triggers.first.scroll_into_view_if_needed(timeout=500)
+                page.wait_for_timeout(random.randint(400, 800))
+                load_triggers.first.click(timeout=2000)
+                page.wait_for_timeout(random.randint(1500, 2500))
+        except Exception:
+            pass
+
+        try:
+            new_height = page.evaluate("document.body.scrollHeight")
+        except Exception:
+            break
+        if new_height <= last_height:
+            break
+        last_height = new_height
+
+    # Scroll back to top slowly
+    try:
+        for y in range(last_height, 0, -random.randint(300, 600)):
+            page.evaluate(f"window.scrollTo(0, {max(0, y)});")
+            page.wait_for_timeout(random.randint(100, 300))
+    except Exception:
+        pass
+    page.wait_for_timeout(random.randint(500, 1000))
+
+
+def _render_with_playwright(url: str, wait_ms: int = 6000, timeout: int = 30) -> dict[str, Any] | None:
+    """Return a rendered snapshot using Playwright, or None if unavailable."""
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore[import-untyped]
+    except Exception as exc:
+        logger.warning(
+            "Playwright is not available (%s); SPA / JS-rendered career "
+            "pages will return 0 jobs.",
+            exc.__class__.__name__,
+        )
+        return None
+
+    browser = None
+    accordion_expanded = 0
+    try:
+        with sync_playwright() as p:
+            launch_args = [
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-web-security",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--no-pings",
+            ]
+            if sys.platform.startswith("linux"):
+                launch_args.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+
+            browser = p.chromium.launch(
+                headless=True,
+                args=launch_args,
+            )
+
+            viewport_width = random.choice([1366, 1440, 1536, 1920])
+            viewport_height = random.choice([768, 900, 1080])
+            page = browser.new_page(
+                viewport={"width": viewport_width, "height": viewport_height},
+                locale="en-US",
+                timezone_id="America/New_York",
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    f"Chrome/{random.choice(['120', '121', '122', '123', '124', '125', '126', '127', '128', '129', '130', '131'])}.0.0.0 "
+                    "Safari/537.36"
+                ),
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Sec-CH-UA": f'"Chromium";v="{random.choice(["120", "122", "124", "126", "128", "130", "131"])}", "Google Chrome";v="{random.choice(["120", "122", "124", "126", "128", "130", "131"])}"',
+                    "Sec-CH-UA-Mobile": "?0",
+                    "Sec-CH-UA-Platform": '"Windows"',
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1",
+                },
+            )
+
+            _apply_stealth_patches(page)
+            captured_json = _register_json_capture(page)
+
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+
+            initial_wait = max(wait_ms, random.randint(5000, 8000))
+            page.wait_for_timeout(initial_wait)
+
+            cookie_dismissed = _dismiss_cookie_banners(page)
+
+            # Let page settle after cookie dismiss before any interactions
+            page.wait_for_timeout(random.randint(1000, 2000))
+
+            found_jobs = _wait_for_job_elements(page, timeout_ms=min(timeout * 1000 // 2, 8000))
+            accordion_expanded = 0
+
+            accordion_expanded = _expand_all_accordions(page)
+            if accordion_expanded:
+                logger.debug(
+                    "Expanded %d accordion(s) on %s", accordion_expanded, url
+                )
+                # Longer settle after accordion expansion
+                page.wait_for_timeout(random.randint(2500, 4000))
+
+            _scroll_and_expand(page)
+
+            # Final settle before extraction — let any late XHR/fetch complete
+            page.wait_for_timeout(random.randint(2000, 3500))
+            found_jobs = _wait_for_job_elements(page, timeout_ms=5000)
+
+            html_snapshots = []
+            html_snapshots.append(page.content() or "")
+
+            for page_idx in range(4):
+                try:
+                    next_button = page.locator(
+                        "button[aria-label*='Next'], button[aria-label*='next'], "
+                        "a[aria-label*='Next'], a[aria-label*='next'], "
+                        "[class*='pagination'] button:has-text('>'), "
+                        "[class*='pager'] button:has-text('>'), "
+                        "[class*='Pagination'] button:has-text('>')"
+                    )
+
+                    if next_button.count() > 0 and next_button.first.is_visible() and next_button.first.is_enabled():
+                        next_button.first.click(timeout=2000)
+                        page.wait_for_timeout(3000)
+                        html_snapshots.append(page.content() or "")
+                    else:
+                        break
+                except Exception:
+                    break
+
+            html = "\n<!-- PAGE_SPLIT -->\n".join(html_snapshots)
+
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+
+            page.wait_for_timeout(1500)
+
+            memory_state_blobs = _extract_spa_memory_state(page)
+            if memory_state_blobs:
+                if isinstance(captured_json, list):
+                    captured_json.extend(memory_state_blobs)
+
+            if is_bot_blocked(html):
+                logger.info("Bot challenge on %s — will skip portal crawl and use connector fallback", url)
+                # Do NOT retry — the session is already flagged. 
+                # Retrying just confirms bot behavior.
+
+            return {
+                "url": page.url or url,
+                "title": _extract_title(html),
+                "html": html,
+                "status": 200,
+                "rendered_by": "playwright",
+                "bot_blocked": is_bot_blocked(html),
+                "found_jobs": found_jobs,
+                "captured_json": captured_json,
+                "accordion_expanded": accordion_expanded,
+                "cookie_dismissed": cookie_dismissed,
+            }
+    except Exception as exc:
+        logger.debug("Playwright render failed for %s: %s", url, exc)
+        return {"url": url, "title": "", "html": "", "status": 0, "error": str(exc), "bot_blocked": False, "found_jobs": False, "captured_json": [], "accordion_expanded": 0, "cookie_dismissed": 0}
+    finally:
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+
+def fetch_rendered_html(
+    url: str,
+    wait_ms: int = 2500,
+    timeout: int = 25,
+    force_browser: bool = False,
+) -> dict[str, Any]:
+    """Fetch a URL and return {url, title, html, status}."""
+    if force_browser:
+        rendered = _render_with_playwright(url, wait_ms=wait_ms, timeout=timeout)
+        if rendered and rendered.get("html"):
+            return rendered
+
+    try:
+        with http_session() as session:
+            response = session.get(url, timeout=timeout)
+            html = response.text or ""
+            title = _extract_title(html)
+
+            blocked = is_bot_blocked(html, response.status_code)
+
+            static = {
+                "url": response.url,
+                "title": title,
+                "html": html,
+                "status": response.status_code,
+                "rendered_by": "requests",
+                "bot_blocked": blocked,
+                "found_jobs": False,
+                "captured_json": [],
+            }
+
+            if blocked:
+                logger.info("Bot-blocked response from %s — upgrading to Playwright", url)
+                rendered = _render_with_playwright(url, wait_ms=wait_ms, timeout=timeout)
+                if rendered and rendered.get("html"):
+                    return rendered
+                return static
+
+            should_render = (
+                not response.ok
+                or _looks_dynamic(html)
+                or _looks_like_careers_url(url)
+            )
+
+            if not should_render:
+                return static
+
+            rendered = _render_with_playwright(url, wait_ms=wait_ms, timeout=timeout)
+            if rendered and rendered.get("html"):
+                rendered_html = rendered.get("html") or ""
+                if len(rendered_html) >= len(html) or _looks_like_careers_url(url):
+                    return rendered
+
+            return static
+    except Exception as exc:
+        fallback = _render_with_playwright(url, wait_ms=wait_ms, timeout=timeout)
+        if fallback and fallback.get("html"):
+            return fallback
+        return {"url": url, "title": "", "html": "", "status": 0, "error": str(exc), "rendered_by": "error", "bot_blocked": False, "found_jobs": False, "captured_json": []}

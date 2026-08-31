@@ -12,6 +12,7 @@ build/
 *.whl
 .eggs/
 pip-wheel-metadata/
+.github/
 
 # ── Virtual environments ───────────────────────────────────────────────────
 my_venv/

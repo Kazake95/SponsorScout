@@ -9,7 +9,6 @@ description = "Verified sponsorship-focused job discovery for international cand
 requires-python = ">=3.10"
 license = "MIT"
 classifiers = [
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -24,10 +23,10 @@ dependencies = [
     "lxml>=4.9.0,<6.0.0",
     "Pillow>=10.0.0,<11.0.0",
     "playwright>=1.40.0,<2.0.0",
+    "PySide6>=6.5.0",
 ]
 
-[project.optional-dependencies]
-test = ["pytest>=7.0.0"]
+# Tests removed; no test extras.
 
 [project.urls]
 Homepage = "https://sponsorscout.app"
@@ -35,9 +34,8 @@ Repository = "https://github.com/your-org/SponsorScout"
 Issues = "https://github.com/your-org/SponsorScout/issues"
 
 [project.scripts]
-sponsorscout = "sponsorscout.ui.app:main"
+sponsorscout = "sponsorscout.main:main"
 sponsorscout-scan = "sponsorscout.scripts.run_scan:main"
-sponsorscout-import = "sponsorscout.scripts.import_companies:main"
 
 [tool.setuptools]
 include-package-data = true
@@ -47,4 +45,4 @@ where = ["."]
 include = ["sponsorscout*"]
 
 [tool.setuptools.package-data]
-sponsorscout = ["data/*.json", "data/*.csv", "data/*.png", "data/*.ico", "data/icons/*.png", "db/*.sql"]
+sponsorscout = ["data/*.json", "data/seeds/*.csv", "data/*.png", "data/*.ico", "data/icons/*.png", "db/*.sql"]

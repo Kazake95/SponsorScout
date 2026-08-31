@@ -1,0 +1,31 @@
+{
+  "EU_PRIORITY": [
+    "Ireland",
+    "Netherlands",
+    "Germany",
+    "Belgium",
+    "Luxembourg",
+    "Austria",
+    "Italy"
+  ],
+  "EU_SECONDARY": [
+    "Sweden",
+    "Denmark",
+    "Finland",
+    "Estonia"
+  ],
+  "EU_EXPANDING": [
+    "Poland",
+    "Czech Republic",
+    "Portugal",
+    "Spain",
+    "Lithuania",
+    "Latvia"
+  ],
+  "GLOBAL_OPTIONAL": [
+    "United Kingdom",
+    "Switzerland",
+    "United Arab Emirates",
+    "Singapore"
+  ]
+}

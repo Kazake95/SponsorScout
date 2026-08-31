@@ -38,20 +38,7 @@ TITLE_NOISE = re.compile(
 )
 
 # Experience-level detection (v0.1.1 feature).
-# We use simple keyword matching on the job title because that's where
-# EU/global ATS boards tend to encode seniority (the description is
-# usually more verbose / multi-lingual and harder to grep).
-#
-# Order matters: we check LEAD before SENIOR because "Lead Senior
-# Engineer" is a thing, and we check EXEC last because "Chief" almost
-# never appears in regular titles but is unambiguous when it does.
 _EXPERIENCE_PATTERNS = [
-    # ── BUGFIX (v0.1.1) ────────────────────────────────────────
-    # BUGFIX: previous version was missing this whole block, so all
-    # jobs normalised to '' and the Search tab's Experience filter had
-    # nothing to match against. Now every normalised job gets one of
-    # 'intern', 'entry', 'mid', 'senior', 'lead', 'exec' or '' (unknown).
-    # ────────────────────────────────────────────────────────────
     ("intern",  re.compile(r"\b(intern(ship)?|praktikant|praktikum|stage|stageplaats|werkstudent)\b", re.I)),
     ("entry",   re.compile(r"\b(junior|entry[- ]level|graduate|new grad|0[\s-]*2\s*years?( experience)?|1[\s-]*2\s*years?( experience)?)\b", re.I)),
     ("mid",     re.compile(r"\b(mid[- ]level|2[\s-]*5\s*years?( experience)?|3[\s-]*5\s*years?( experience)?|engineer ii\b|specialist\b)\b", re.I)),
@@ -62,12 +49,6 @@ _EXPERIENCE_PATTERNS = [
 
 
 def detect_experience_level(title: str) -> str:
-    """Classify a job title into an experience bucket.
-
-    Returns one of: 'intern', 'entry', 'mid', 'senior', 'lead', 'exec', or ''.
-    The first matching bucket wins, so we order patterns from most
-    specific (intern / exec) to least (mid).
-    """
     if not title:
         return ""
     for level, pat in _EXPERIENCE_PATTERNS:
@@ -91,13 +72,34 @@ def normalize_title(raw: str) -> str:
     return title
 
 
+# Vague region labels that ATS boards use instead of actual city/country.
+# These are kept for display (shown to users) but country_from_location
+# will fall back to company HQ country for the country field.
+_VAGUE_REGIONS: set[str] = {
+    "europe", "emea", "eu", "apac", "latam", "mena",
+    "global", "worldwide", "international",
+    "multiple locations", "various locations",
+    "not specified", "tbd", "n/a",
+}
+
+
 def normalize_location(raw: str) -> str:
+    """Clean and normalize a raw location string.
+
+    Preserves vague regions (e.g. "Europe", "EMEA") for display so users
+    can see what the posting says. The country field falls back to company
+    HQ country via country_from_location() when location gives no signal.
+    Returns the cleaned location for display, never empty for vague regions.
+    """
     if not raw:
         return ""
-    # Check for remote signals
-    low = raw.lower()
+    low = raw.lower().strip()
+    # Always preserve "remote" locations for display
     if "remote" in low:
         return raw.strip()
+    # If it's a vague region, return it as-is for display (trimmed)
+    if low in _VAGUE_REGIONS:
+        return raw.strip().title()
     # Trim excessive whitespace
     return re.sub(r"\s+", " ", raw).strip()
 
@@ -140,4 +142,6 @@ def normalize_job(raw: dict, source_type: str, source_name: str, fallback_compan
         "source_type": source_type,
         "source_name": source_name,
         "experience_level": detect_experience_level(title),
+        # Industry: propagate from connector data (which sources it from company registry)
+        "industry": raw.get("industry", ""),
     }

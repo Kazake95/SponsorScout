@@ -1,0 +1,192 @@
+"""Foreground scan coordinator.
+
+SponsorScout never runs a persistent background scan loop. This small
+coordinator exists so the UI and CLI can share scan progress and completion
+handling; manual scans run in a one-shot worker thread to keep the desktop
+UI responsive. The class used to be named ``BackgroundScanner`` and is
+preserved here under its new, accurate name for backwards compatibility
+with anyone importing it as such.
+"""
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from pathlib import Path
+from typing import Callable, Optional
+
+from sponsorscout.db.database import initialize, DB_PATH, get_connection
+from sponsorscout.services.registry_loader import load_seed_registry
+from sponsorscout.core.scanner import scan_all
+from sponsorscout.core.dedup import dedup_jobs_in_db
+
+logger = logging.getLogger(__name__)
+
+
+class ScanCoordinator:
+    def __init__(
+        self,
+        db_path: Path = DB_PATH,
+        on_progress: Optional[Callable[[str], None]] = None,
+        on_complete: Optional[Callable[[int], None]] = None,
+    ):
+        self.db_path = db_path
+        self.on_progress = on_progress or (lambda msg: print(msg))
+        self.on_complete = on_complete or (lambda n: None)
+        self._scan_in_progress = threading.Lock()
+        self._cancel_event = threading.Event()
+        self._last_run: Optional[float] = None
+        self._was_cancelled = False
+
+    def set_on_progress(self, callback: Optional[Callable[[str], None]]) -> None:
+        """Replace the progress callback used during scans."""
+        if callback is None:
+            return
+        self.on_progress = callback
+
+    def start(self):
+        # Background/periodic scanning has been disabled in the UI and is now
+        # a no-op here to guarantee the app never keeps a persistent scan loop
+        # alive after the main window closes.
+        self.on_progress("Automatic background scanning is disabled.")
+        return
+
+    def stop(self):
+        """Alias for cancel(). Kept so existing callers (e.g. the window
+        close handler) that expect a stop() method still work."""
+        self.cancel()
+
+    def cancel(self):
+        """Request that the in-progress scan stop after its current company.
+
+        There is no way to safely abort a single in-flight HTTP request
+        without risking a half-written DB record, so cancellation is
+        cooperative: the running scan checks this flag between companies and
+        stops there. Everything found before the stop request is kept.
+        """
+        if self.is_scanning:
+            self._cancel_event.set()
+            self.on_progress(
+                "⏹ Stop requested — finishing the current company, then stopping…"
+            )
+
+    def pause(self):
+        return
+
+    def resume(self):
+        return
+
+    @property
+    def is_running(self) -> bool:
+        return False
+
+    @property
+    def is_scanning(self) -> bool:
+        return self._scan_in_progress.locked()
+
+    @property
+    def is_cancelled(self) -> bool:
+        """True if the most recently completed scan was stopped by the user
+        rather than finishing on its own."""
+        return self._was_cancelled
+
+    @property
+    def last_run(self) -> Optional[float]:
+        return self._last_run
+
+    def run_now(self):
+        """Run a scan in a one-shot worker thread.
+
+        This keeps the app responsive without enabling a persistent background
+        loop.
+        """
+        if not self._scan_in_progress.acquire(blocking=False):
+            self.on_progress("Scan already in progress; skipping this request.")
+            return
+        self._cancel_event.clear()
+        self._was_cancelled = False
+        t = threading.Thread(
+            target=self._guarded_scan,
+            name="SponsorScout-ImmediateScan",
+            daemon=True,
+        )
+        t.start()
+
+    def _guarded_scan(self):
+        """Run _do_scan under the in-progress lock, always releasing it."""
+        try:
+            self._do_scan()
+        finally:
+            try:
+                self._scan_in_progress.release()
+            except RuntimeError:
+                pass
+
+    @staticmethod
+    def _purge_old_expired_jobs(conn, older_than_days: int = 30) -> int:
+        """Delete expired jobs older than N days. Returns number of rows removed."""
+        cursor = conn.execute(
+            """
+            DELETE FROM jobs
+            WHERE is_expired = 1
+              AND updated_at < datetime('now', ?)
+            """,
+            (f"-{older_than_days} days",),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+    def _do_scan(self):
+        self.on_progress("Scan starting…")
+        found = []
+        try:
+            initialize(self.db_path)
+            companies = load_seed_registry()
+            total = len(companies)
+            self.on_progress(f"Scanning {total} companies…")
+
+            def _company_progress(msg, done, total_c):
+                pct = int(done / total_c * 100) if total_c else 0
+                self.on_progress(f"[{done}/{total_c}  {pct}%]  {msg}")
+
+            found = scan_all(
+                companies,
+                db_path=self.db_path,
+                parallel=False,
+                on_progress=_company_progress,
+                cancel_event=self._cancel_event,
+            )
+            self._last_run = time.time()
+
+            # Auto-cleanup: purge old expired rows and dedup after each scan
+            try:
+                conn = get_connection(self.db_path)
+                try:
+                    purged = self._purge_old_expired_jobs(conn)
+                    deduped = dedup_jobs_in_db(conn)
+                    if purged:
+                        self.on_progress(f"🧹 Purged {purged} expired job(s) older than 30 days.")
+                    if deduped:
+                        self.on_progress(f"🧹 Removed {deduped} duplicate job(s).")
+                finally:
+                    conn.close()
+            except Exception as exc:
+                logger.warning("Auto-cleanup after scan failed: %s", exc)
+
+            if self._cancel_event.is_set():
+                self._was_cancelled = True
+                self.on_progress(
+                    f"⏹ Scan stopped by user — {len(found)} jobs found before stopping."
+                )
+            else:
+                self.on_progress(
+                    f"✅ Scan complete — {len(found)} jobs found across {total} companies."
+                )
+        except Exception as exc:
+            logger.exception("Scan failed")
+            self.on_progress(f"Scan error: {exc}")
+        finally:
+            self.on_complete(len(found))
+
+# Backwards-compatible alias for the old class name.
+BackgroundScanner = ScanCoordinator

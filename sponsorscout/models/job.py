@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+
 @dataclass
 class Job:
     """Domain model for a single job listing.
@@ -9,7 +10,7 @@ class Job:
     ``sponsorscout/db/schema.sql``. Adding a new column to the DB without
     adding it here will silently keep flowing through as a dict key in
     scanner code, which is exactly the inconsistency that
-    SponsorScout_Codebase_Analysis.md §3.4 / §5.6 warned about.
+    SponsorScout_Codebase_Analysis.md \u00a73.4 / \u00a75.6 warned about.
     """
 
     external_id: str
@@ -21,6 +22,10 @@ class Job:
     description: str = ""
     ats_source: str = ""
     source_type: str = "verified"
+    # Phase 3: 'direct' for jobs scraped from a company's own careers page;
+    # 'aggregator' for jobs sourced from aggregator/portal cards where the
+    # company name is extracted per-card rather than inherited from the registry.
+    source_subtype: str = "direct"
     source_name: str = ""
     trust_score: int = 100
     freshness_score: int = 100
@@ -36,6 +41,21 @@ class Job:
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
     last_verified_at: datetime | None = None
+    # ── Scan evidence (PySide6 restart) ──────────────────────────────────────
+    # Honest three-state verdicts from the shared JD support detector:
+    # 'Y' / 'N' / 'Unknown'.  The INTEGER fields above are derived booleans
+    # (verdict 'Y' -> 1, else 0) kept for compatibility with existing queries.
+    visa_sponsorship: str = ""
+    relocation_support: str = ""
+    eu_blue_card_verdict: str = ""
+    relocation_required: str = ""
+    support_confidence: float = 0.0
+    support_evidence: str = ""
+    support_evidence_url: str = ""
+    support_evidence_type: str = ""
+    blue_card_evidence: str = ""
+    canonical_job_id: str = ""
+    run_id: str = ""
 
     def to_record(self) -> dict:
         """Return a flat dict ready for ``upsert_job`` / DB writes."""

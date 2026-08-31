@@ -9,15 +9,6 @@ APP_DIR_ENV = "SPONSORSCOUT_DATA_DIR"
 DB_PATH_ENV = "SPONSORSCOUT_DB_PATH"
 
 
-def _get_frozen_base_dir() -> Path | None:
-    """Return the directory of the frozen executable (PyInstaller)."""
-    if getattr(sys, "frozen", False):
-        # sys._MEIPASS is the temp dir; our exe sits one level above
-        if hasattr(sys, "_MEIPASS"):
-            return Path(sys._MEIPASS)
-    return None
-
-
 def _configure_bundled_playwright_browsers_path() -> None:
     """If running as a frozen build with a bundled ``_playwright`` directory
     next to the executable, point Playwright at it.
@@ -84,7 +75,22 @@ def get_user_data_dir() -> Path:
 USER_DATA_DIR = get_user_data_dir()
 DB_PATH = Path(os.environ.get(DB_PATH_ENV, "")).expanduser() if os.environ.get(DB_PATH_ENV) else USER_DATA_DIR / "sponsorscout.db"
 
+# Per-user, user-editable copy of the seed CSVs.  Bundled seeds in
+# sponsorscout/data are the defaults; the app copies them here on first run
+# and all user edits (Data Management tab) target these mutable copies so a
+# packaged build never writes into its own application bundle.
+SEEDS_DIR = USER_DATA_DIR / "seeds"
+
+# Raw scan-evidence artifacts (the algorithm scripts' CSV outputs and
+# per-run scan logs).  Kept outside the DB so users can inspect them.
+SCAN_OUTPUT_DIR = USER_DATA_DIR / "scan_output"
+
 
 def ensure_user_data_dir() -> Path:
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     return USER_DATA_DIR
+
+
+def ensure_scan_output_dir() -> Path:
+    SCAN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return SCAN_OUTPUT_DIR

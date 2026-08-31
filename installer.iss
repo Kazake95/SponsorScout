@@ -46,9 +46,13 @@ Compression=lzma2
 SolidCompression=yes
 ShowTasksTreeLines=yes
 DisableFinishedPage=no
+
+; Natively detect if SponsorScout is already running
+AppMutex=SponsorScoutAppMutex
 ; Force-close the app during both install and uninstall
 CloseApplications=force
 RestartApplications=no
+
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
@@ -62,8 +66,9 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFile
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIcoName}"; Tasks: desktopicon
 
 [Registry]
-; No PLAYWRIGHT_BROWSERS_PATH set — Playwright downloads its browser to
-; %LOCALAPPDATA%\ms-playwright automatically on first use.
+; Set PLAYWRIGHT_BROWSERS_PATH to use the bundled _playwright directory
+; for offline operation without requiring internet on first run.
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "PLAYWRIGHT_BROWSERS_PATH"; ValueData: "{app}\_playwright"; Flags: uninsdeletevalue; Permissions: everyone-modify
 
 [Tasks]
 Name: "desktopicon"; Description: "Create Desktop Shortcut"; GroupDescription: "Additional Icons"; Flags: unchecked
@@ -78,14 +83,12 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im SponsorScout.exe"; Flags: ru
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im Sponsorscout.exe"; Flags: runhidden runminimized skipifdoesntexist
 
 [UninstallDelete]
-; Remove the entire installed app directory (exe, DLLs, subdirs, etc.)
+; Clean up installed folders and files that weren't copied by Inno (databases, logs, settings)
 Type: filesandordirs; Name: "{app}"
-; Remove the user data directory (DB, logs, profiles, locale, CV)
 Type: filesandordirs; Name: "{userappdata}\SponsorScout"
-; Remove any Playwright browser cache downloaded at first run
 Type: filesandordirs; Name: "{localappdata}\ms-playwright"
-; Remove any SponsorScout data in local app data
 Type: filesandordirs; Name: "{localappdata}\SponsorScout"
+Type: filesandordirs; Name: "{%USERPROFILE}\.sponsorscout"
 
 [Code]
 const
@@ -113,9 +116,7 @@ begin
       else
       begin
         Log('Failed to create AppData dir: ' + AppDir);
-        MsgBox('Warning: Could not create the application data folder.'#13#10 +
-               'Some features may not work correctly.'#13#10 +
-               'Target: ' + AppDir, mbError, MB_OK);
+        messagebox.showinfo('Warning', 'Failed to create AppData folder. Database features may be restricted.');
       end;
     end;
   end;
@@ -126,12 +127,44 @@ var
   AppDir: string;
   ResultCode: Integer;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    // Synchronously terminate any running instance of the application at the start of uninstall
+    // to prevent file locks or orphaned processes.
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im SponsorScout.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+
   if CurUninstallStep = usPostUninstall then
   begin
+    // 1. Recursive cleanup of the AppData user folder (SQLite databases, logs, customized prompts)
     AppDir := GetUserAppDataDir();
     if DirExists(AppDir) then
     begin
       Log('Removing AppData directory: ' + AppDir);
+      DelTree(AppDir, True, True, True);
+    end;
+
+    // 2. Remove the user profile dot folder (~/.sponsorscout) if it exists
+    AppDir := ExpandConstant('{%USERPROFILE}\.sponsorscout');
+    if DirExists(AppDir) then
+    begin
+      Log('Removing user profile dot folder: ' + AppDir);
+      DelTree(AppDir, True, True, True);
+    end;
+
+    // 3. Remove the Local AppData cache folder ({localappdata}\SponsorScout)
+    AppDir := ExpandConstant('{localappdata}\SponsorScout');
+    if DirExists(AppDir) then
+    begin
+      Log('Removing Local AppData folder: ' + AppDir);
+      DelTree(AppDir, True, True, True);
+    end;
+
+    // 4. Remove Playwright's downloaded browser binaries ({localappdata}\ms-playwright)
+    AppDir := ExpandConstant('{localappdata}\ms-playwright');
+    if DirExists(AppDir) then
+    begin
+      Log('Removing Playwright browser binaries: ' + AppDir);
       DelTree(AppDir, True, True, True);
     end;
   end;

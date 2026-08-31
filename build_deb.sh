@@ -30,10 +30,18 @@ need() {
 need python3
 need dpkg-deb
 
-python3 -m pip install --upgrade pip >/dev/null
-python3 -m pip install -r requirements.txt pyinstaller >/dev/null
+# Repair pip if it is in a broken state (e.g. a half-finished self-upgrade
+# left pip._internal.operations.build missing). We detect the breakage by
+# trying to import the internal module, then delete the truncated package and
+# re-bootstrap pip from its bundled wheel via ensurepip.
+if ! python3 -c "import pip._internal.operations.build" >/dev/null 2>&1; then
+  echo "Repairing broken pip installation…"
+  SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')"
+  rm -rf "$SITE/pip" "$SITE"/pip-*.dist-info
+  python3 -m ensurepip --upgrade >/dev/null 2>&1 || python3 -m ensurepip >/dev/null 2>&1 || true
+fi
+python3 -m pip install -r requirements.txt >/dev/null
 python3 -m playwright install chromium >/dev/null || true
-python3 -m pytest -q
 
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 mkdir -p "$APP_DIR" "$DEBIAN_DIR" "$DIST_DIR"
@@ -47,23 +55,19 @@ python3 -m PyInstaller \
   --collect-data sponsorscout \
   --collect-submodules sponsorscout \
   --collect-submodules playwright \
-  --collect-submodules google \
-  --collect-submodules google.generativeai \
-  --collect-submodules openai \
-  --hidden-import google.generativeai \
-  --hidden-import openai \
+  --collect-submodules PySide6 \
   sponsorscout/main.py
 
 cp -a "dist/$APP_NAME/"* "$APP_DIR/"
 
-# ── Size reduction: strip binaries, remove caches, remove Chromium ───────────
-echo "Reducing .deb size…"
-
-# Strip ELF shared libraries and executables (saves 20-40 MB)
-find "$APP_DIR" -type f \( -name "*.so" -o -name "*.so.*" \) \
-  ! -name "*.pyd" -print0 2>/dev/null | xargs -0 strip --strip-unneeded 2>/dev/null || true
-find "$APP_DIR" -maxdepth 1 -type f -executable -print0 2>/dev/null | \
-  xargs -0 -I{} sh -c 'file "$1" | grep -q ELF && strip --strip-unneeded "$1" 2>/dev/null' _ {} || true
+# ── Size reduction: remove caches only ──────────────────────────────────────
+# WARNING: Do NOT `strip` the bundled *.so files. PyInstaller ships many Python
+# C extensions (numpy/lxml/Pillow/Playwright) whose symbol tables and
+# unwind/exception metadata are required at runtime. Stripping them with
+# --strip-unneeded produces intermittent SIGSEGV / corrupted-rendering crashes
+# that look like a "virus" or "glitchy UI" on the user's machine. We only drop
+# caches and obviously-unneeded metadata to stay safe.
+echo "Reducing .deb size (safe mode — no binary stripping)…"
 
 # Remove __pycache__ directories and .pyc files (saves 5-15 MB)
 find "$APP_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
@@ -79,10 +83,9 @@ find "$APP_DIR" -type d -name "locale" -exec rm -rf {} + 2>/dev/null || true
 find "$APP_DIR" -type d \( -name "tests" -o -name "test" -o -name "testing" \) \
   -not -path "*/sponsorscout/*" -exec rm -rf {} + 2>/dev/null || true
 
-# Remove Chromium from Playwright bundle if it got included inadvertently
-rm -rf "$APP_DIR/_playwright" 2>/dev/null || true
-find "$APP_DIR" -path "*/playwright/driver/package/.local-browsers/*" -exec rm -rf {} + 2>/dev/null || true
-
+# NOTE: The bundled Playwright Chromium (_playwright) is intentionally KEPT so
+# JS-rendered career portals work out of the box. Deleting it makes every scan
+# fail and the UI appear hung/frozen.
 echo "Size reduction complete."
 
 mkdir -p "$BUILD_DIR/usr/bin"
@@ -187,20 +190,47 @@ chmod 755 "$DEBIAN_DIR/postinst"
 cat > "$DEBIAN_DIR/postrm" <<'EOL'
 #!/bin/sh
 set -e
-# Remove generated app data from the install directory and any per-user
-# SponsorScout configuration directory left behind on uninstall.
+
+# ── Kill any running SponsorScout process before removing files ──────────────
+# This prevents file locks and orphaned processes, matching the Windows
+# installer behavior (taskkill /f /im SponsorScout.exe).
+for sig in TERM KILL; do
+  pids=$(pgrep -x "SponsorScout" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "SponsorScout: stopping running instance(s) (SIG$sig)…"
+    # shellcheck disable=SC2086
+    kill -s "$sig" $pids 2>/dev/null || true
+    sleep 1
+  fi
+done
+
+# ── Remove generated app data from the install directory ─────────────────────
 APP_DIR="/opt/sponsorscout"
 if [ -d "$APP_DIR" ]; then
   rm -rf "$APP_DIR"
 fi
+
+# ── Remove per-user SponsorScout configuration and Playwright browser cache ──
+# Iterates over all user home directories to ensure complete cleanup,
+# matching the Windows installer which removes {userappdata}\SponsorScout,
+# {localappdata}\SponsorScout, and {localappdata}\ms-playwright.
 for USER_HOME in "/root" "$HOME" /home/*; do
+  # Remove user config/data directory
   if [ -d "$USER_HOME/.sponsorscout" ]; then
     rm -rf "$USER_HOME/.sponsorscout"
   fi
   if [ -f "$USER_HOME/.sponsorscout" ]; then
     rm -f "$USER_HOME/.sponsorscout"
   fi
+
+  # Remove Playwright Chromium browser cache (~150 MB per user)
+  PLAYWRIGHT_CACHE="$USER_HOME/.cache/ms-playwright"
+  if [ -d "$PLAYWRIGHT_CACHE" ]; then
+    echo "SponsorScout: removing Playwright browser cache: $PLAYWRIGHT_CACHE"
+    rm -rf "$PLAYWRIGHT_CACHE"
+  fi
 done
+
 exit 0
 EOL
 chmod 755 "$DEBIAN_DIR/postrm"

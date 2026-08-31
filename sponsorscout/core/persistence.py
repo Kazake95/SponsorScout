@@ -70,19 +70,59 @@ def upsert_job(conn, job):
     could silently rewrite the wrong row's columns. Now the INSERT/UPDATE
     preserves all persisted fields, including experience_level, while still
     using the unique job URL as the stable key.
+    
+    B3 fix: when no industry is provided on the job record, backfill from
+    the companies table using the company name so the column is always
+    populated for new inserts and updates.
     """
+    # Defense-in-depth (locked decision #1/#4): when three-state verdict
+    # columns are present, the legacy derived booleans are always recomputed
+    # from them ('Y' -> 1, everything else -> 0) regardless of what the
+    # caller passed, so Unknown can never leak into the UI as a hard "No".
+    verdict = str(job.get("eu_blue_card_verdict") or "").strip().lower()
+    if verdict:
+        job = {**job, "eu_blue_card": 1 if verdict == "y" else 0}
+    verdict = str(job.get("relocation_support") or "").strip().lower()
+    if verdict:
+        job = {**job, "has_relocation": 1 if verdict == "y" else 0}
     normalized_url = normalize_url(job.get("url", ""))
     company_name = (job.get("company", "") or "").strip()
     if not normalized_url:
         return
 
+    # Backfill industry from the companies table if not provided on the job
+    job_industry = job.get("industry", "")
+    if not job_industry and company_name:
+        try:
+            row = conn.execute(
+                "SELECT industry FROM companies WHERE name=? AND industry != '' LIMIT 1",
+                (company_name,),
+            ).fetchone()
+            if row:
+                job_industry = row["industry"]
+        except Exception:
+            pass
+
+    # Country chain (Q8 decision): explicit job country wins; otherwise
+    # derive a best-effort country from the job location text.
+    job_country = str(job.get("country", "") or "").strip()
+    if not job_country:
+        from sponsorscout.core.location_country import country_from_location
+        job_country = country_from_location(str(job.get("location", "") or ""))
+
     conn.execute(
         """INSERT INTO jobs
            (external_id, title, company, country, location, url, ats_source,
-            source_type, source_name, description, trust_score, freshness_score,
+            source_type, source_subtype, source_name, description, trust_score, freshness_score,
             sponsorship_score, match_score, verified_active, is_expired,
-            last_verified_at, remote_type, eu_blue_card, has_relocation, experience_level)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_verified_at, remote_type, eu_blue_card, has_relocation, experience_level,
+            industry, ai_score,
+            visa_sponsorship, relocation_support, eu_blue_card_verdict,
+            relocation_required, support_confidence, support_evidence,
+            support_evidence_url, support_evidence_type, blue_card_evidence,
+            canonical_job_id, run_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(url) DO UPDATE SET
              title=excluded.title,
              company=excluded.company,
@@ -90,6 +130,7 @@ def upsert_job(conn, job):
              location=excluded.location,
              ats_source=excluded.ats_source,
              source_type=excluded.source_type,
+             source_subtype=excluded.source_subtype,
              source_name=excluded.source_name,
              description=excluded.description,
              trust_score=excluded.trust_score,
@@ -103,16 +144,30 @@ def upsert_job(conn, job):
              remote_type=excluded.remote_type,
              eu_blue_card=excluded.eu_blue_card,
              has_relocation=excluded.has_relocation,
-             experience_level=excluded.experience_level""",
+             experience_level=excluded.experience_level,
+             industry=COALESCE(NULLIF(excluded.industry,''), industry),
+             ai_score=excluded.ai_score,
+             visa_sponsorship=excluded.visa_sponsorship,
+             relocation_support=excluded.relocation_support,
+             eu_blue_card_verdict=excluded.eu_blue_card_verdict,
+             relocation_required=excluded.relocation_required,
+             support_confidence=excluded.support_confidence,
+             support_evidence=excluded.support_evidence,
+             support_evidence_url=excluded.support_evidence_url,
+             support_evidence_type=excluded.support_evidence_type,
+             blue_card_evidence=excluded.blue_card_evidence,
+             canonical_job_id=excluded.canonical_job_id,
+             run_id=excluded.run_id""",
         (
             job.get("external_id", ""),
             job.get("title", ""),
             company_name,
-            job.get("country", ""),
+            job_country,
             job.get("location", ""),
             normalized_url,
             job.get("ats_source", ""),
             job.get("source_type", "verified"),
+            job.get("source_subtype", "direct"),
             job.get("source_name", ""),
             job.get("description", ""),
             int(job.get("trust_score", 0) or 0),
@@ -126,6 +181,20 @@ def upsert_job(conn, job):
             int(job.get("eu_blue_card", 0) or 0),
             int(job.get("has_relocation", 0) or 0),
             job.get("experience_level", ""),
+            job_industry,
+            int(job.get("ai_score", 0) or 0),
+            # ── Scan evidence columns ────────────────────────────────────────
+            job.get("visa_sponsorship", ""),
+            job.get("relocation_support", ""),
+            job.get("eu_blue_card_verdict", ""),
+            job.get("relocation_required", ""),
+            float(job.get("support_confidence", 0) or 0),
+            job.get("support_evidence", ""),
+            job.get("support_evidence_url", ""),
+            job.get("support_evidence_type", ""),
+            job.get("blue_card_evidence", ""),
+            job.get("canonical_job_id", ""),
+            job.get("run_id", ""),
         ),
     )
     conn.commit()

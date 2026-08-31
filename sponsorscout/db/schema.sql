@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     url TEXT UNIQUE NOT NULL,
     ats_source TEXT DEFAULT '',
     source_type TEXT DEFAULT 'verified',
+    -- Phase 3: distinguishes aggregator-sourced jobs (e.g., LinkedIn, Indeed,
+    -- Remotive) from direct career-page jobs.  Used by the scanner to decide
+    -- whether the per-card 'company' field should be trusted over the registry.
+    source_subtype TEXT DEFAULT 'direct',
     source_name TEXT DEFAULT '',
     description TEXT DEFAULT '',
     trust_score INTEGER DEFAULT 0,
@@ -42,6 +46,29 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- because experience-level is a soft enum (the model never changes)
     -- and a tiny one. NULL means "not yet classified" (legacy rows).
     experience_level TEXT DEFAULT '',
+    -- NEW: industry tag sourced from company registry (v0.2.0)
+    industry TEXT DEFAULT '',
+    -- AI domain detection: ★ when AI keywords detected in job listing
+    ai_score INTEGER DEFAULT 0,
+    -- ── Scan evidence columns (PySide6 restart migration) ────────────────────
+    -- Honest three-state verdicts from the shared JD support detector:
+    -- 'Y' / 'N' / 'Unknown' ('' for legacy rows never classified).
+    -- The legacy INTEGER columns above (eu_blue_card, has_relocation) are
+    -- derived booleans (verdict 'Y' -> 1, else 0) kept so existing queries
+    -- keep working; these TEXT columns are the authoritative values the UI
+    -- renders.  Unknown is never coerced to a hard "No".
+    visa_sponsorship TEXT DEFAULT '',
+    relocation_support TEXT DEFAULT '',
+    eu_blue_card_verdict TEXT DEFAULT '',
+    relocation_required TEXT DEFAULT '',
+    support_confidence REAL DEFAULT 0,
+    support_evidence TEXT DEFAULT '',
+    support_evidence_url TEXT DEFAULT '',
+    support_evidence_type TEXT DEFAULT '',
+    blue_card_evidence TEXT DEFAULT '',
+    -- Provenance: which scan produced / last confirmed this row.
+    canonical_job_id TEXT DEFAULT '',
+    run_id TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -51,17 +78,47 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_norm
     ON companies(LOWER(TRIM(name)));
 
-CREATE TABLE IF NOT EXISTS discoveries (
-    id INTEGER PRIMARY KEY,
-    company TEXT DEFAULT '',
-    job_title TEXT DEFAULT '',
-    job_url TEXT DEFAULT '',
-    source_name TEXT DEFAULT '',
-    source_type TEXT DEFAULT '',
-    verification_status TEXT DEFAULT 'pending',
-    promoted_to_job INTEGER DEFAULT 0,
-    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP
+-- ── Scan evidence (per-scan logs) ────────────────────────────────────────────
+-- One row per scan execution (Quick / Full / Full+Detail).  The scan log keeps
+-- the per-company outcomes exactly as the algorithm scripts emit them, so the
+-- Tools tab can show "scan history" evidence without touching job rows.
+CREATE TABLE IF NOT EXISTS scan_runs (
+    run_id TEXT PRIMARY KEY,
+    method TEXT DEFAULT '',
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT,
+    targets_ok INTEGER DEFAULT 0,
+    targets_empty INTEGER DEFAULT 0,
+    targets_error INTEGER DEFAULT 0,
+    jobs_found INTEGER DEFAULT 0,
+    jobs_quarantined INTEGER DEFAULT 0,
+    jobs_duplicates INTEGER DEFAULT 0,
+    ats_companies INTEGER DEFAULT 0,
+    career_companies INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'running',
+    error TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS scan_log (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    scanner TEXT DEFAULT '',
+    seed_name TEXT DEFAULT '',
+    company TEXT DEFAULT '',
+    source_type TEXT DEFAULT '',
+    target_country TEXT DEFAULT '',
+    status TEXT DEFAULT '',
+    provider TEXT DEFAULT '',
+    jobs_found INTEGER DEFAULT 0,
+    quarantined INTEGER DEFAULT 0,
+    duplicates INTEGER DEFAULT 0,
+    rejected_scope INTEGER DEFAULT 0,
+    error TEXT DEFAULT '',
+    diagnostics TEXT DEFAULT '',
+    duration_sec REAL DEFAULT 0,
+    seed_url TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scan_log_run ON scan_log(run_id);
 
 CREATE TABLE IF NOT EXISTS applications (
     id INTEGER PRIMARY KEY,
@@ -78,17 +135,6 @@ CREATE TABLE IF NOT EXISTS applications (
 
 CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(title, company, description);
 
-
-CREATE TABLE IF NOT EXISTS ats_health (
-    ats_name TEXT PRIMARY KEY,
-    success_count INTEGER DEFAULT 0,
-    failure_count INTEGER DEFAULT 0,
-    success_rate REAL DEFAULT 0,
-    avg_response_ms REAL DEFAULT 0,
-    last_success TEXT,
-    last_failure TEXT
-);
-
 CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(title);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
 CREATE INDEX IF NOT EXISTS idx_jobs_country ON jobs(country);
@@ -98,16 +144,6 @@ CREATE INDEX IF NOT EXISTS idx_jobs_match ON jobs(match_score);
 CREATE INDEX IF NOT EXISTS idx_jobs_url ON jobs(url);
 CREATE INDEX IF NOT EXISTS idx_jobs_firstseen ON jobs(first_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_sponsored_fresh ON jobs(sponsorship_score DESC, first_seen_at DESC);
-
--- Remote classification columns (added in v0.4)
-CREATE TABLE IF NOT EXISTS company_discovery_queue (
-    id INTEGER PRIMARY KEY,
-    careers_url TEXT UNIQUE NOT NULL,
-    ats_type TEXT DEFAULT 'official_careers',
-    company_name TEXT DEFAULT '',
-    country TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending',
-    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    processed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_discovery_status ON company_discovery_queue(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_source_subtype ON jobs(source_subtype);
+CREATE INDEX IF NOT EXISTS idx_jobs_run_id ON jobs(run_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_canonical ON jobs(canonical_job_id);

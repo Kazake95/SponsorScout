@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from contextlib import contextmanager
 from pathlib import Path
 from sponsorscout.paths import DB_PATH, ensure_user_data_dir
-from sponsorscout.services.objectives import get_search_objective
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +11,8 @@ logger = logging.getLogger(__name__)
 def _configure_connection(conn, db_path=DB_PATH):
     """Apply standard PRAGMA settings to a fresh sqlite3 connection.
 
-    Centralised here so both ``_get_conn`` (context manager) and
-    ``get_connection`` (raw accessor) configure their connections identically.
+    Centralised so both the raw ``get_connection`` accessor and any future
+    context managers configure connections identically.
     """
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -26,26 +24,6 @@ def _configure_connection(conn, db_path=DB_PATH):
     # Performance: NORMAL is safe with WAL; reduces fsync overhead.
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
-
-
-@contextmanager
-def _get_conn(db_path=DB_PATH):
-    """Context manager for database connections ensuring proper cleanup."""
-    conn = None
-    try:
-        db_path = Path(db_path).expanduser()
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        ensure_user_data_dir()
-        conn = _configure_connection(sqlite3.connect(str(db_path), timeout=30.0))
-        yield conn
-        conn.commit()
-    except Exception:
-        if conn:
-            conn.rollback()
-        raise
-    finally:
-        if conn:
-            conn.close()
 
 
 def get_connection(db_path=DB_PATH):
@@ -64,6 +42,24 @@ def _apply_migrations(conn):
         ("has_relocation", "ALTER TABLE jobs ADD COLUMN has_relocation INTEGER DEFAULT 0"),
         # BUGFIX: support the new "Experience" filter (v0.1.1).
         ("experience_level", "ALTER TABLE jobs ADD COLUMN experience_level TEXT DEFAULT ''"),
+        # BUGFIX: support Phase 3 source subtype migration
+        ("source_subtype", "ALTER TABLE jobs ADD COLUMN source_subtype TEXT DEFAULT 'direct'"),
+        # NEW: industry tag sourced from company registry (v0.2.0)
+        ("industry", "ALTER TABLE jobs ADD COLUMN industry TEXT DEFAULT ''"),
+        # AI domain detection score (v0.2.1)
+        ("ai_score", "ALTER TABLE jobs ADD COLUMN ai_score INTEGER DEFAULT 0"),
+        # ── Scan evidence columns (PySide6 restart migration) ────────────────
+        ("visa_sponsorship", "ALTER TABLE jobs ADD COLUMN visa_sponsorship TEXT DEFAULT ''"),
+        ("relocation_support", "ALTER TABLE jobs ADD COLUMN relocation_support TEXT DEFAULT ''"),
+        ("eu_blue_card_verdict", "ALTER TABLE jobs ADD COLUMN eu_blue_card_verdict TEXT DEFAULT ''"),
+        ("relocation_required", "ALTER TABLE jobs ADD COLUMN relocation_required TEXT DEFAULT ''"),
+        ("support_confidence", "ALTER TABLE jobs ADD COLUMN support_confidence REAL DEFAULT 0"),
+        ("support_evidence", "ALTER TABLE jobs ADD COLUMN support_evidence TEXT DEFAULT ''"),
+        ("support_evidence_url", "ALTER TABLE jobs ADD COLUMN support_evidence_url TEXT DEFAULT ''"),
+        ("support_evidence_type", "ALTER TABLE jobs ADD COLUMN support_evidence_type TEXT DEFAULT ''"),
+        ("blue_card_evidence", "ALTER TABLE jobs ADD COLUMN blue_card_evidence TEXT DEFAULT ''"),
+        ("canonical_job_id", "ALTER TABLE jobs ADD COLUMN canonical_job_id TEXT DEFAULT ''"),
+        ("run_id", "ALTER TABLE jobs ADD COLUMN run_id TEXT DEFAULT ''"),
     ]
     for col, sql in migrations:
         if col not in existing_cols:
@@ -75,18 +71,52 @@ def _apply_migrations(conn):
 
     # New tables and indexes that depend on migration-added columns.
     conn.executescript("""
-        CREATE TABLE IF NOT EXISTS company_discovery_queue (
-            id INTEGER PRIMARY KEY,
-            careers_url TEXT UNIQUE NOT NULL,
-            ats_type TEXT DEFAULT 'official_careers',
-            company_name TEXT DEFAULT '',
-            country TEXT DEFAULT '',
-            status TEXT DEFAULT 'pending',
-            discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            processed_at TEXT
+        CREATE TABLE IF NOT EXISTS scan_runs (
+            run_id TEXT PRIMARY KEY,
+            method TEXT DEFAULT '',
+            started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            finished_at TEXT,
+            targets_ok INTEGER DEFAULT 0,
+            targets_empty INTEGER DEFAULT 0,
+            targets_error INTEGER DEFAULT 0,
+            jobs_found INTEGER DEFAULT 0,
+            jobs_quarantined INTEGER DEFAULT 0,
+            jobs_duplicates INTEGER DEFAULT 0,
+            ats_companies INTEGER DEFAULT 0,
+            career_companies INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'running',
+            error TEXT DEFAULT ''
         );
-        CREATE INDEX IF NOT EXISTS idx_discovery_status ON company_discovery_queue(status);
+        CREATE TABLE IF NOT EXISTS scan_log (
+            id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            scanner TEXT DEFAULT '',
+            seed_name TEXT DEFAULT '',
+            company TEXT DEFAULT '',
+            source_type TEXT DEFAULT '',
+            target_country TEXT DEFAULT '',
+            status TEXT DEFAULT '',
+            provider TEXT DEFAULT '',
+            jobs_found INTEGER DEFAULT 0,
+            quarantined INTEGER DEFAULT 0,
+            duplicates INTEGER DEFAULT 0,
+            rejected_scope INTEGER DEFAULT 0,
+            error TEXT DEFAULT '',
+            diagnostics TEXT DEFAULT '',
+            duration_sec REAL DEFAULT 0,
+            seed_url TEXT DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_scan_log_run ON scan_log(run_id);
     """)
+
+    # ── Legacy tables removed with the Tkinter→PySide6 restart ──────────────
+    # AI assets (AI features removed per project decision), the discovery
+    # engine queue/results, and the connector health table are all obsolete.
+    for legacy in ("user_ai_assets", "company_discovery_queue", "discoveries", "ats_health"):
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {legacy}")
+        except Exception as exc:
+            logger.exception("Failed to drop legacy table %s: %s", legacy, exc)
 
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
 
@@ -107,7 +137,7 @@ def _apply_migrations(conn):
     conn.commit()
 
     # Sanity check that essential migration columns exist.
-    expected_cols = {"remote_type", "eu_blue_card", "has_relocation", "experience_level"}
+    expected_cols = {"remote_type", "eu_blue_card", "has_relocation", "experience_level", "source_subtype"}
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     missing = expected_cols - existing_cols
     if missing:
@@ -123,13 +153,24 @@ def _apply_migrations(conn):
 def initialize(db_path=DB_PATH):
     conn = get_connection(db_path)
     try:
+        # Check if the jobs table already exists on disk
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+        ).fetchone()
+
+        # If table exists, run migrations first to ensure all required columns
+        # are present before executescript tries to build indexes on them.
+        if table_exists:
+            _apply_migrations(conn)
+
         conn.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
         conn.commit()
-        _apply_migrations(conn)
-        # Create the ats_health table at startup so callers don't need to
-        # call ensure_table() on every record_success/record_failure call.
-        from sponsorscout.services.ats_health import ensure_table
-        ensure_table(conn)
+
+        # If the table didn't exist before, it has been created by executescript.
+        # Now run migrations safely to configure outstanding indices or queues.
+        if not table_exists:
+            _apply_migrations(conn)
+
         # Fix country/location mismatch for any existing records
         from sponsorscout.db.migrate_countries import migrate_job_countries
         migrate_job_countries(conn)
@@ -138,18 +179,13 @@ def initialize(db_path=DB_PATH):
         conn.close()
 
 
-def search_jobs(db_path, title="", company="", country="All", source_type="All",
+def search_jobs(db_path, title="", company="", location="", country="All", source_type="All",
                 verified_only=True, sponsorship_only=False, active_only=True,
                 remote_filter="All", eu_blue_card_only=False, relocation_only=False,
-                experience_filter="All", sort_by="best", objective="Balanced"):
+                sponsorship_filter="All", blue_card_filter="All", relocation_filter="All"):
     conn = None
     try:
         conn = get_connection(db_path)
-        # BUGFIX (v0.1.1): the SELECT now also pulls `experience_level` and
-        # `first_seen_at` so the UI can render the new filter chip and the
-        # new "Latest" sort. The COALESCE on experience_level means legacy
-        # rows with NULL/'' show up under 'All' rather than getting filtered
-        # out by the experience filter.
         query = """SELECT title, company, country, location, source_type, source_name,
                    trust_score, freshness_score, sponsorship_score, match_score,
                    verified_active, is_expired, url, last_verified_at, description,
@@ -157,10 +193,14 @@ def search_jobs(db_path, title="", company="", country="All", source_type="All",
                    COALESCE(remote_type, 'onsite') as remote_type,
                    COALESCE(eu_blue_card, 0) as eu_blue_card,
                    COALESCE(has_relocation, 0) as has_relocation,
-                   COALESCE(experience_level, '') as experience_level
+                   COALESCE(experience_level, '') as experience_level,
+                   COALESCE(industry, '') as industry,
+                   COALESCE(ai_score, 0) as ai_score,
+                   COALESCE(visa_sponsorship, '') as visa_sponsorship,
+                   COALESCE(relocation_support, '') as relocation_support,
+                   COALESCE(eu_blue_card_verdict, '') as eu_blue_card_verdict
                    FROM jobs WHERE 1=1"""
         params = []
-        objective_cfg = get_search_objective(objective)
 
         if title:
             query += " AND lower(title) LIKE ?"
@@ -168,6 +208,9 @@ def search_jobs(db_path, title="", company="", country="All", source_type="All",
         if company:
             query += " AND lower(company) LIKE ?"
             params.append(f"%{company.lower()}%")
+        if location:
+            query += " AND lower(location) LIKE ?"
+            params.append(f"%{location.lower()}%")
         if country and country != "All":
             # Match jobs whose country matches the filter, or remote roles
             # that are explicitly EU/EMEA remote and therefore relevant to the
@@ -197,65 +240,42 @@ def search_jobs(db_path, title="", company="", country="All", source_type="All",
                 query += " AND remote_type = 'hybrid'"
             elif remote_filter == "Remote Only":
                 query += " AND remote_type IN ('remote_eu', 'remote_emea', 'remote_global', 'remote')"
+            else:
+                query += " AND remote_type = ?"
+                params.append(remote_filter.lower())
         if eu_blue_card_only:
             query += " AND eu_blue_card = 1"
         if relocation_only:
             query += " AND has_relocation = 1"
-        if experience_filter and experience_filter != "All":
-            # BUGFIX: previous version had no experience filter, so users
-            # couldn't separate "Senior Engineer" from "Entry Level" jobs.
-            # The 'All' option also matches NULL/empty so legacy rows are
-            # not silently dropped from the result set.
-            if experience_filter == "Any (incl. unknown)":
-                pass  # no filter
-            elif experience_filter == "Unknown / Not classified":
-                query += " AND (experience_level IS NULL OR experience_level = '')"
-            else:
-                query += " AND experience_level = ?"
-                params.append(experience_filter.lower())
 
-        # Objective profile filters: keep the backend broad, but let the
-        # search layer turn the same dataset into a stricter, more relevant
-        # view for the current user / goal.
-        if objective_cfg.min_match_score:
-            query += " AND match_score >= ?"
-            params.append(objective_cfg.min_match_score)
-        if objective_cfg.min_sponsorship_score:
-            query += " AND sponsorship_score >= ?"
-            params.append(objective_cfg.min_sponsorship_score)
-        if objective_cfg.require_blue_card:
-            query += " AND eu_blue_card = 1"
-        if objective_cfg.require_relocation:
-            query += " AND has_relocation = 1"
+        # ── Three-state verdict filters (locked decision #1) ─────────────────
+        # Values: "All" | "Y" | "N" | "Unknown".  Honest semantics: legacy
+        # rows (verdict == '') count as Unknown for the visa verdict, and for
+        # blue-card / relocation the pre-migration booleans are honoured so
+        # existing data remains filterable.  Unknown is never treated as N.
+        def _verdict_clause(verdict_col, legacy_col, value):
+            if value == "Y":
+                if legacy_col:
+                    return (f" AND (COALESCE({verdict_col},'') = 'Y' "
+                            f"OR (COALESCE({verdict_col},'') = '' AND {legacy_col} = 1))")
+                return " AND COALESCE(%s,'') = 'Y'" % verdict_col
+            if value == "N":
+                if legacy_col:
+                    return (f" AND (COALESCE({verdict_col},'') = 'N' "
+                            f"OR (COALESCE({verdict_col},'') = '' AND {legacy_col} = 0))")
+                return " AND COALESCE(%s,'') = 'N'" % verdict_col
+            # "Unknown" — explicitly unclassified or detector-said-unknown rows
+            return f" AND COALESCE({verdict_col},'') IN ('Unknown', '')"
 
-        if objective_cfg.allowed_countries:
-            placeholders = ", ".join(["?"] * len(objective_cfg.allowed_countries))
-            remote_types = objective_cfg.allowed_remote_types or ("remote_eu", "remote_emea")
-            remote_placeholders = ", ".join(["?"] * len(remote_types))
-            query += (
-                f" AND (country IN ({placeholders}) "
-                f"OR (country = '' AND remote_type IN ({remote_placeholders})))"
-            )
-            params.extend(objective_cfg.allowed_countries)
-            params.extend(remote_types)
-        elif objective_cfg.allowed_remote_types:
-            placeholders = ", ".join(["?"] * len(objective_cfg.allowed_remote_types))
-            query += f" AND remote_type IN ({placeholders})"
-            params.extend(objective_cfg.allowed_remote_types)
+        if sponsorship_filter in ("Y", "N", "Unknown"):
+            query += _verdict_clause("visa_sponsorship", None, sponsorship_filter)
+        if blue_card_filter in ("Y", "N", "Unknown"):
+            query += _verdict_clause("eu_blue_card_verdict", "eu_blue_card", blue_card_filter)
+        if relocation_filter in ("Y", "N", "Unknown"):
+            query += _verdict_clause("relocation_support", "has_relocation", relocation_filter)
 
-        # BUGFIX (v0.1.1): new sort modes. Default 'best' keeps the old
-        # behavior (trust, freshness, match, sponsorship). 'latest' sorts
-        # by when the job first appeared in the database so users see the
-        # freshest postings first. 'sponsorship' is a shortcut for "show me
-        # the most sponsorship-likely jobs first".
-        if sort_by == "latest":
-            query += " ORDER BY first_seen_at DESC, trust_score DESC"
-        elif sort_by == "sponsorship":
-            query += " ORDER BY sponsorship_score DESC, first_seen_at DESC, match_score DESC"
-        elif objective_cfg.is_strict:
-            query += " ORDER BY match_score DESC, sponsorship_score DESC, trust_score DESC, freshness_score DESC, last_verified_at DESC"
-        else:  # 'best' or anything else
-            query += " ORDER BY trust_score DESC, freshness_score DESC, match_score DESC, sponsorship_score DESC, last_verified_at DESC"
+        # Default sort by best match
+        query += " ORDER BY sponsorship_score DESC, trust_score DESC, match_score DESC"
         rows = conn.execute(query, params).fetchall()
         return rows
     finally:
@@ -369,9 +389,26 @@ def get_dashboard_country_counts(db_path):
             conn.close()
 
 
-def get_dashboard_ats_health(db_path):
-    from sponsorscout.services.ats_health import get_rows
-    return get_rows(db_path)
+def get_distinct_job_countries(db_path) -> list[str]:
+    """Return a sorted list of distinct job location countries from the DB.
+
+    Used to populate the Country filter dropdown with only countries that
+    actually have jobs, rather than a static EU list.
+    """
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute("""
+            SELECT DISTINCT country FROM jobs
+            WHERE country <> '' AND verified_active = 1 AND is_expired = 0
+            ORDER BY country ASC
+        """).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 
 def upsert_application(db_path, job_url, company, title, status="saved",
@@ -410,47 +447,231 @@ def list_applications(db_path):
             conn.close()
 
 
-def enqueue_discovery(db_path, careers_url: str, ats_type: str = "official_careers",
-                      company_name: str = "", country: str = ""):
-    conn = None
-    try:
-        conn = get_connection(db_path)
-        conn.execute("""
-            INSERT OR IGNORE INTO company_discovery_queue (careers_url, ats_type, company_name, country)
-            VALUES (?, ?, ?, ?)
-        """, (careers_url, ats_type, company_name, country))
-        conn.commit()
-    finally:
-        if conn:
-            conn.close()
+# ── Scan-run evidence helpers ────────────────────────────────────────────────
+# The pipeline records one scan_runs row per execution plus one scan_log row
+# per scanned company (mirroring the _scan_log.csv the algorithm scripts emit),
+# so the Tools tab can show per-scan evidence without re-reading CSV files.
 
-
-def get_pending_discovery(db_path, limit: int = 20) -> list[dict]:
-    conn = None
-    try:
-        conn = get_connection(db_path)
-        rows = conn.execute(
-            "SELECT * FROM company_discovery_queue WHERE status='pending' ORDER BY discovered_at ASC LIMIT ?",
-            (limit,)
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        if conn:
-            conn.close()
-
-
-def mark_discovery_processed(db_path, careers_url: str, status: str = "processed"):
+def start_scan_run(db_path, run_id: str, method: str, ats_companies: int,
+                   career_companies: int):
     conn = None
     try:
         conn = get_connection(db_path)
         conn.execute(
-            "UPDATE company_discovery_queue SET status=?, processed_at=CURRENT_TIMESTAMP WHERE careers_url=?",
-            (status, careers_url)
+            """INSERT INTO scan_runs (run_id, method, ats_companies, career_companies, status)
+               VALUES (?, ?, ?, ?, 'running')
+               ON CONFLICT(run_id) DO UPDATE SET
+                 method=excluded.method,
+                 started_at=CURRENT_TIMESTAMP,
+                 finished_at=NULL,
+                 status='running',
+                 error=''""",
+            (run_id, method, int(ats_companies), int(career_companies)),
         )
         conn.commit()
     finally:
         if conn:
             conn.close()
+
+
+def finish_scan_run(db_path, run_id: str, targets_ok: int = 0,
+                    targets_empty: int = 0, targets_error: int = 0,
+                    jobs_found: int = 0, jobs_quarantined: int = 0,
+                    jobs_duplicates: int = 0, status: str = "completed",
+                    error: str = ""):
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        conn.execute(
+            """UPDATE scan_runs SET
+                 targets_ok=?, targets_empty=?, targets_error=?,
+                 jobs_found=?, jobs_quarantined=?, jobs_duplicates=?,
+                 finished_at=CURRENT_TIMESTAMP, status=?, error=?
+               WHERE run_id=?""",
+            (int(targets_ok), int(targets_empty), int(targets_error),
+             int(jobs_found), int(jobs_quarantined), int(jobs_duplicates),
+             status, error, run_id),
+        )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+def record_scan_log_rows(db_path, run_id: str, scanner: str, rows):
+    """Insert per-company scan-log rows (dicts using the scan_log columns)."""
+    if not rows:
+        return
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        conn.executemany(
+            """INSERT INTO scan_log
+               (run_id, scanner, seed_name, company, source_type, target_country,
+                status, provider, jobs_found, quarantined, duplicates,
+                rejected_scope, error, diagnostics, duration_sec, seed_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    run_id, scanner,
+                    (r.get("seed_name") or r.get("Seed Name") or ""),
+                    (r.get("company") or r.get("Company") or ""),
+                    (r.get("source_type") or r.get("Source Type") or ""),
+                    (r.get("target_country") or r.get("Target Country") or ""),
+                    (r.get("status") or r.get("Status") or ""),
+                    (r.get("provider") or r.get("Provider") or ""),
+                    int(r.get("jobs_found", r.get("Jobs Found", 0)) or 0),
+                    int(r.get("quarantined", r.get("Quarantined", 0)) or 0),
+                    int(r.get("duplicates", r.get("Duplicates", 0)) or 0),
+                    int(r.get("rejected_scope", r.get("Rejected Scope", 0)) or 0),
+                    (r.get("error") or r.get("Error") or ""),
+                    (r.get("diagnostics") or r.get("Diagnostics") or "")[:4000],
+                    float(r.get("duration_sec", r.get("Duration Sec", 0)) or 0),
+                    (r.get("seed_url") or r.get("Seed URL") or ""),
+                )
+                for r in rows
+            ],
+        )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+def list_scan_runs(db_path, limit: int = 25):
+    """Most recent scan runs first (for the Tools tab scan-history view)."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute(
+            """SELECT run_id, method, started_at, finished_at, status, error,
+                      targets_ok, targets_empty, targets_error,
+                      jobs_found, jobs_quarantined, jobs_duplicates,
+                      ats_companies, career_companies
+               FROM scan_runs ORDER BY started_at DESC LIMIT ?""",
+            (int(limit),),
+        ).fetchall()
+        return rows
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_scan_log(db_path, run_id: str):
+    """Per-company outcomes for one scan run."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute(
+            """SELECT seed_name, company, source_type, target_country, status,
+                      provider, jobs_found, quarantined, duplicates,
+                      rejected_scope, error, diagnostics, duration_sec, seed_url
+               FROM scan_log WHERE run_id=? ORDER BY id ASC""",
+            (run_id,),
+        ).fetchall()
+        return rows
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_distinct_remote_types(db_path) -> list[str]:
+    """Return distinct remote_type values from active jobs for dynamic filter dropdown."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute("""
+            SELECT DISTINCT remote_type FROM jobs
+            WHERE remote_type IS NOT NULL AND remote_type != ''
+            AND verified_active = 1 AND is_expired = 0
+            ORDER BY remote_type ASC
+        """).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_distinct_job_companies(db_path) -> list[str]:
+    """Return distinct company names from active jobs for dynamic filter dropdown."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute("""
+            SELECT DISTINCT company FROM jobs
+            WHERE company IS NOT NULL AND company != ''
+            AND verified_active = 1 AND is_expired = 0
+            ORDER BY company ASC
+        """).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_distinct_job_locations(db_path) -> list[str]:
+    """Return distinct location values from active jobs for dynamic filter dropdown."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute("""
+            SELECT DISTINCT location FROM jobs
+            WHERE location IS NOT NULL AND location != ''
+            AND verified_active = 1 AND is_expired = 0
+            ORDER BY location ASC
+        """).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_distinct_experience_levels(db_path) -> list[str]:
+    """Return distinct experience_level values from active jobs for dynamic filter dropdown."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute("""
+            SELECT DISTINCT experience_level FROM jobs
+            WHERE experience_level IS NOT NULL AND experience_level != ''
+            AND verified_active = 1 AND is_expired = 0
+            ORDER BY experience_level ASC
+        """).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_distinct_industries(db_path) -> list[str]:
+    """Return distinct industry values from active jobs for dynamic filter dropdown."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute("""
+            SELECT DISTINCT industry FROM jobs
+            WHERE industry IS NOT NULL AND industry != ''
+            AND verified_active = 1 AND is_expired = 0
+            ORDER BY industry ASC
+        """).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+# ── Scan-run evidence queries (see pipeline/Tools tab) ──────────────────────
+# (The former AI asset storage functions were removed with the AI features.)
 
 
 def delete_application(db_path, job_url: str):

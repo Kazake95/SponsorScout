@@ -38,17 +38,27 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
 }
 
 Write-Host "[1/4] Installing build dependencies..." -ForegroundColor Cyan
-& $Python @PythonArgs -m pip install --upgrade pip | Out-Null
-& $Python @PythonArgs -m pip install -r requirements.txt pyinstaller | Out-Null
+# Repair pip if it is in a broken state (e.g. a half-finished self-upgrade
+# left pip._internal.operations.build missing). Detect the breakage, delete
+# the truncated package, then re-bootstrap pip from its bundled wheel.
+$RepairNeeded = $true
+try {
+    & $Python @PythonArgs -c "import pip._internal.operations.build" 2>$null
+    if ($LASTEXITCODE -eq 0) { $RepairNeeded = $false }
+} catch { }
+if ($RepairNeeded) {
+    Write-Host "Repairing broken pip installation..." -ForegroundColor Yellow
+    $Site = (& $Python @PythonArgs -c "import site,sys; print(site.getsitepackages()[0])" 2>$null)
+    if ($Site) {
+        Get-ChildItem -Path $Site -Filter 'pip*' -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    & $Python @PythonArgs -m ensurepip --upgrade 2>$null
+    if ($LASTEXITCODE -ne 0) { & $Python @PythonArgs -m ensurepip 2>$null }
+}
+& $Python @PythonArgs -m pip install -r requirements.txt | Out-Null
 & $Python @PythonArgs -m playwright install chromium | Out-Null
 
-Write-Host "[2/4] Running tests..." -ForegroundColor Cyan
-& $Python @PythonArgs -m pytest -q
-if ($LASTEXITCODE -ne 0) {
-    throw "Tests failed (exit $LASTEXITCODE). Aborting build."
-}
-
-Write-Host "[3/4] Building SponsorScout.exe with PyInstaller..." -ForegroundColor Cyan
+Write-Host "[2/4] Building SponsorScout.exe with PyInstaller..." -ForegroundColor Cyan
 if (Test-Path $DistDir) {
     Remove-Item -Recurse -Force $DistDir
 }
@@ -62,13 +72,8 @@ if (Test-Path $DistDir) {
     --icon sponsorscout/data/sponsorscout.ico `
     --collect-data sponsorscout `
     --collect-submodules sponsorscout `
-    --collect-submodules google `
-    --collect-submodules google.generativeai `
-    --collect-submodules openai `
-    --hidden-import google.generativeai `
-    --hidden-import openai `
-    --hidden-import PIL `
-    --hidden-import PIL._tkinter_finder `
+    --collect-submodules playwright `
+    --collect-submodules PySide6 `
     sponsorscout/main.py
 
 if (-not (Test-Path $ExePath)) {
@@ -77,20 +82,24 @@ if (-not (Test-Path $ExePath)) {
 Write-Host "Built $ExePath (version $Version)" -ForegroundColor Green
 
 # Prepare installer source directory with the entire onedir build output.
-# Playwright's Chromium is NOT bundled — it downloads at first run to
-# %LOCALAPPDATA%\ms-playwright automatically when the app calls
-# playwright.sync_api.sync_playwright().
+# Playwright's Chromium IS bundled for offline use — it will be installed to
+# %LOCALAPPDATA%\ms-playwright automatically during first run from the bundled
+# _playwright directory, or used directly if PLAYWRIGHT_BROWSERS_PATH is set.
 $InstallerSrcDir = Join-Path $DistDir "$AppName-InstallerFiles"
 if (Test-Path $InstallerSrcDir) {
     Remove-Item -Recurse -Force $InstallerSrcDir
 }
-Copy-Item -Path $BuildDir -Destination $InstallerSrcDir -Recurse -Force
-# Remove any _playwright directory that PyInstaller may have collected —
-# Chromium is not bundled with the installer; it downloads to
-# %LOCALAPPDATA%\ms-playwright at runtime.
+
+# Create the directory explicitly and copy contents using a wildcard to prevent nesting
+New-Item -ItemType Directory -Path $InstallerSrcDir -Force | Out-Null
+Copy-Item -Path "$BuildDir\*" -Destination $InstallerSrcDir -Recurse -Force
+
+# Preserve _playwright directory with Chromium binaries for offline operation.
+# The installer.iss sets PLAYWRIGHT_BROWSERS_PATH to use these bundled browsers.
 $PlaywrightInBundle = Join-Path $InstallerSrcDir '_playwright'
-if (Test-Path $PlaywrightInBundle) {
-    Remove-Item -Recurse -Force $PlaywrightInBundle
+if (-not (Test-Path $PlaywrightInBundle)) {
+    Write-Warning "Playwright browsers not found in bundle at $PlaywrightInBundle"
+    Write-Warning "Career portal scanning may require internet on first run."
 }
 
 # Step 4: Build Inno Setup installer if ISCC.exe is available

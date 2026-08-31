@@ -39,19 +39,25 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
 ]
 
-# Cloudflare challenge detection markers
-# Only high-confidence markers that uniquely identify Cloudflare challenge pages.
+# Cloudflare challenge detection markers.
+# IMPORTANT: Only use markers that are EXCLUSIVE to challenge/block pages.
+# Many legitimate sites use Cloudflare for CDN, analytics and DDoS protection.
+# These CF strings appear on ALL Cloudflare-protected sites, including normal
+# rendered career pages — do NOT use them as bot-block signals:
+#   cf-ray         → added to every CF response header, often embedded in HTML
+#   cf_clearance   → CF session cookie, appears in forms/JS on real pages
+#   challenges.cloudflare.com  → CF Turnstile widget used in job APPLY forms
+#   __cf_chl_opt   → CF challenge var, but also appears in CF analytics
+#   cf-wrapper     → generic class name used by many sites independently
 _CLOUDFLARE_MARKERS = [
-    "cf-browser-verification",
-    "challenge-platform",
-    "cf_clearance",
-    "cf-ray",
-    "DDoS protection by",
-    "Attention Required! | Cloudflare",
+    "cf-browser-verification",       # exclusive to CF browser check pages
+    "/_cf/challenge-platform/",      # exclusive to CF challenge script path
+    "DDoS protection by",            # exclusive to CF challenge page text
+    "Attention Required! | Cloudflare",  # exclusive to CF block page title
+    "challenge-platform",            # exclusive to CF managed challenge
 ]
 
 # Bot challenge markers that are safe to check even in large pages.
-# These are specific enough that they rarely appear in legitimate career page content.
 _SAFE_CHALLENGE_MARKERS = [
     "datadome",
     "Please verify you are a human",
@@ -60,6 +66,13 @@ _SAFE_CHALLENGE_MARKERS = [
     "Please stand by, while we are checking your browser",
     "Checking if the site connection is secure",
     "Just a moment...",
+    "Enable JavaScript and cookies to continue",  # CF interstitial
+    "Your IP has been blocked",
+    "Access denied",
+    "perimeterx",         # PerimeterX bot protection
+    "px-captcha",
+    "incapsula",          # Imperva/Incapsula
+    "visitorapiresponse", # Imperva response token
 ]
 
 
@@ -125,12 +138,16 @@ def _random_user_agent() -> str:
 
 def _new_session() -> Session:
     retry = Retry(
-        total=5,
-        connect=5,
-        read=5,
-        status=5,
-        backoff_factor=1.5,
-        status_forcelist=(429, 500, 502, 503, 504),
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=2.0,
+        # 429 is intentionally excluded: it means "rate limited — back off".
+        # Retrying 429 immediately just makes the rate-limit worse. Connectors
+        # that need Retry-After handling (e.g. Greenhouse) do so manually.
+        # 503 is included because it usually means "temporarily overloaded".
+        status_forcelist=(500, 502, 503, 504),
         allowed_methods=frozenset({"GET", "HEAD", "POST"}),
         raise_on_status=False,
     )
