@@ -24,7 +24,7 @@ if _PROJECT_ROOT not in sys.path:
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sponsorscout.i18n import load_saved_locale  # noqa: E402
-from sponsorscout.ui.style import build_qss  # noqa: E402
+from sponsorscout.ui.style import build_light_palette, build_qss  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,13 @@ def main() -> None:
     load_saved_locale()
 
     app = QApplication(sys.argv or ["sponsorscout"])
+    # Fusion renders the QSS paddings/borders predictably across Windows
+    # styles (and avoids the combo/spinbox text-overlap artifacts), while
+    # the explicit light palette keeps every label legible even when the
+    # OS is in dark mode — Qt >= 6.5 would otherwise inject the system
+    # dark palette into this light-only stylesheet.
+    app.setStyle("Fusion")
+    app.setPalette(build_light_palette())
     app.setStyleSheet(build_qss())
     app.setApplicationName("SponsorScout")
 

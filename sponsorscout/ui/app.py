@@ -25,7 +25,6 @@ from sponsorscout.i18n import (
     set_locale,
 )
 from sponsorscout.paths import DB_PATH
-from sponsorscout.ui.style import build_qss
 from sponsorscout.ui.tabs import (
     ApplicationsTab, DashboardTab, DataManagementTab, SearchTab, ToolsTab,
 )
@@ -57,7 +56,6 @@ class SponsorScoutApp(QMainWindow):
         root_lay.addWidget(self._build_header())
         root_lay.addWidget(self._build_tabs(), 1)
 
-        self.setStyleSheet(build_qss())
         self._load_icon()
 
         # Initial data load

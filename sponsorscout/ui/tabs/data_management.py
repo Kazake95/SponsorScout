@@ -10,12 +10,12 @@ the rules enforced by both scanner scripts (seed_manager.validate_row).
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout,
-    QWidget,
+    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
 from sponsorscout.application import seed_manager as sm
@@ -139,6 +139,13 @@ class SeedEditor(QWidget):
         self.table.setColumnWidth(0, 150)
         self.table.setColumnWidth(1, 120)
         self.table.setColumnWidth(2, 260)
+        header = self.table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # Wide/numerous columns: size-to-content so long field names such
+        # as "sponsorship_history" / "english_friendly" are never clipped
+        # mid-word (the horizontal scrollbar handles the overflow).
+        for col in range(3, self.table.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         lay.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()

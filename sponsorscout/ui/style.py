@@ -5,6 +5,8 @@ to the previous UI concept (dark navy header, light body, white cards,
 blue accent) while letting QSS do the heavy lifting.
 """
 
+from PySide6.QtGui import QColor, QPalette
+
 HEADER_BG = "#1d2d44"
 HEADER_FG = "#ffffff"
 ACCENT = "#3a7bd5"
@@ -21,6 +23,36 @@ BAD_RED = "#c0392b"
 FONT_FAMILY = "Helvetica"  # matches the tkinter original
 
 
+def build_light_palette() -> QPalette:
+    """Force the light palette the QSS was designed for.
+
+    Qt >= 6.5 auto-dark-palettes on Windows when the system runs in dark
+    mode; without this override the light QSS mixes near-white palette
+    text colors with light backgrounds and every unstyled label becomes
+    illegibly faint.
+    """
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BODY_BG))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_MAIN))
+    palette.setColor(QPalette.ColorRole.Base, QColor(CARD_BG))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f7f9fb"))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_MAIN))
+    palette.setColor(QPalette.ColorRole.Button, QColor(CARD_BG))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_MAIN))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(CARD_BG))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_MAIN))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(TEXT_MUTED))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,
+                     QColor("#b0b7bf"))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText,
+                     QColor("#b0b7bf"))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText,
+                     QColor("#b0b7bf"))
+    return palette
+
+
 def build_qss() -> str:
     """Global stylesheet applied to the QApplication."""
     return f"""
@@ -29,12 +61,22 @@ QFrame#Header {{ background-color: {HEADER_BG}; }}
 QFrame#Header QLabel {{ color: {HEADER_FG}; }}
 QFrame#Header QLabel#AppSubtitle {{ color: #b8c4d4; font-size: 11px; }}
 QFrame#Header QLabel#AppTitle {{ font-size: 20px; font-weight: bold; }}
+QLabel {{ color: {TEXT_MAIN}; }}
 QLabel#StatusLabel {{ color: {TEXT_MUTED}; font-size: 11px; }}
+QLabel#SectionHeader, QLabel#SectionTitle {{ color: {HEADER_BG};
+        font-size: 13px; font-weight: bold; }}
+QLabel#MutedLabel {{ color: {TEXT_MUTED}; font-size: 11px; }}
 
 QFrame#Card {{ background-color: {CARD_BG}; border: 1px solid {BORDER};
                border-radius: 6px; }}
 QLabel#CardTitle {{ color: {TEXT_MUTED}; font-size: 11px; font-weight: bold; }}
 QLabel#CardValue {{ color: {TEXT_MAIN}; font-size: 22px; font-weight: bold; }}
+
+QGroupBox {{ background-color: {CARD_BG}; border: 1px solid {BORDER};
+             border-radius: 6px; margin-top: 4ex; }}
+QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left;
+        left: 10px; padding: 0 4px; color: {HEADER_BG};
+        font-size: 12px; font-weight: bold; }}
 
 QTabWidget::pane {{ border: 1px solid {BORDER}; background: {CARD_BG};
                     border-radius: 4px; }}
@@ -60,8 +102,8 @@ QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QDoubleSpinBox {{
     padding: 4px 6px; color: {TEXT_MAIN}; }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {{
     border-color: {ACCENT}; }}
-QComboBox QAbstractItemView {{ background: white;
-    selection-background-color: {ACCENT}; }}
+QComboBox QAbstractItemView {{ background: white; color: {TEXT_MAIN};
+    selection-background-color: {ACCENT}; selection-color: white; }}
 
 QTableWidget {{ background-color: {CARD_BG}; alternate-background-color: #f7f9fb;
                 gridline-color: {BORDER}; color: {TEXT_MAIN};
@@ -82,6 +124,10 @@ QScrollBar::handle:horizontal {{ background: #c3ccd6; border-radius: 5px;
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 
 QDialog {{ background-color: {BODY_BG}; }}
+QDialog QLabel {{ color: {TEXT_MAIN}; }}
+QMessageBox {{ background-color: {CARD_BG}; }}
+QMessageBox QLabel {{ color: {TEXT_MAIN}; }}
 QLabel#FormError {{ color: {BAD_RED}; font-size: 11px; }}
-QLabel#SectionHeader {{ color: {HEADER_BG}; font-size: 13px; font-weight: bold; }}
+QToolTip {{ color: {TEXT_MAIN}; background-color: {CARD_BG};
+    border: 1px solid {BORDER}; }}
 """

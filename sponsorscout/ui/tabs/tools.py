@@ -82,6 +82,7 @@ class ToolsTab(QWidget):
         scanner = QGroupBox(_("Scanner"))
         lay = QVBoxLayout(scanner)
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.method_label = QLabel(_("Method"))
         self.method_combo = QComboBox()
         self.method_combo.addItem(_("Quick (API-first)"), "quick")
@@ -141,6 +142,7 @@ class ToolsTab(QWidget):
     def _build_freshness_group(self):
         box = QGroupBox(_("Freshness Check"))
         lay = QHBoxLayout(box)
+        lay.setSpacing(8)
         lay.addWidget(QLabel(_("Check up to")))
         self.verify_n = QSpinBox()
         self.verify_n.setRange(5, 200)

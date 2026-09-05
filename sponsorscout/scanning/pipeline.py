@@ -242,6 +242,51 @@ def _count_seed_rows(path: Path) -> int:
         return 0
 
 
+class _LiveIngester(threading.Thread):
+    """Progressively ingest scanner CSV rows while the scan is still running.
+
+    Both scanners append accepted rows to their output CSVs company by
+    company, so tailing them lets the Dashboard show live numbers during a
+    scan instead of only after ingestion.  Ingestion is idempotent
+    (``upsert_job`` upserts on the normalized URL and shares the run's
+    ``seen_canonical`` dedup set), and the final bulk ingest at the end of
+    ``run_scan`` re-upserts everything, so no special bookkeeping is needed.
+    """
+
+    def __init__(self, db_path, run_id: str,
+                 csv_specs: list[tuple[Path, str]],
+                 seen_canonical: set,
+                 interval: float = 5.0,
+                 progress: ProgressFn | None = None):
+        super().__init__(name="LiveIngester", daemon=True)
+        self.db_path = db_path
+        self.run_id = run_id
+        self.csv_specs = csv_specs
+        self.seen_canonical = seen_canonical
+        self.interval = interval
+        self.progress = progress or _noop_progress
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        ingested_so_far = 0
+        while not self._stop.wait(self.interval):
+            try:
+                for path, subtype in self.csv_specs:
+                    ingested, _dups = _ingest_output_csv(
+                        self.db_path, path, self.run_id,
+                        source_subtype=subtype, seen_canonical=self.seen_canonical)
+                    ingested_so_far += ingested
+                if ingested_so_far:
+                    self.progress(
+                        f"Ingested live so far: {ingested_so_far} jobs "
+                        "(Dashboard 'Refresh' reflects these)")
+            except Exception:  # pragma: no cover - never kill the poller
+                logger.exception("Live ingestion cycle failed")
+
+
 # ── Orchestration ────────────────────────────────────────────────────────────
 
 def run_scan(method: str = "quick",
@@ -302,6 +347,24 @@ def run_scan(method: str = "quick",
     progress(f"Scan {run_id} started: method={method}, "
              f"ATS companies={n_ats}, career companies={n_career}")
 
+    # Live ingestion: scanners write accepted rows to their CSVs company by
+    # company, so tail them into the DB while the scan runs. This makes the
+    # Dashboard's Refresh button show live numbers mid-scan. The final bulk
+    # ingest below re-upserts everything (idempotent), so counts stay exact.
+    seen_canonical: set = set()
+    live = _LiveIngester(
+        db_path, run_id,
+        csv_specs=[
+            (ats_out, "direct"),
+            (ats_out.with_name(ats_out.stem + "_recruiter.csv"), "recruiter"),
+            (career_out, "direct"),
+            (career_out.with_name(career_out.stem + "_recruiter.csv"), "recruiter"),
+        ],
+        seen_canonical=seen_canonical,
+        progress=progress,
+    )
+    live.start()
+
     # 1 ─ ATS scan (API-first, fast) ------------------------------------------
     if n_ats > 0:
         try:
@@ -349,6 +412,11 @@ def run_scan(method: str = "quick",
             progress(f"Career scan failed: {exc}")
 
     # 3 ─ Ingest accepted rows + scan logs into the DB ------------------------
+    live.stop()
+    live.join(timeout=15)
+    # Deliberately a *fresh* dedup set: the final pass re-reads every row once
+    # so the summary counts match the previous bulk-only behaviour exactly
+    # (rows already ingested live are simply upserted again, idempotently).
     seen_canonical: set = set()
     ingested_total = dup_total = log_rows_total = 0
     for csv_base, scanner_label in ((ats_csv, "ats"), (career_csv, "career")):

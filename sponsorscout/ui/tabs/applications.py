@@ -6,8 +6,7 @@ selecting a row reveals the edit form; Save updates status + notes;
 Remove deletes the row after confirmation.
 """
 
-from PySide6.QtCore import Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
@@ -39,7 +38,6 @@ class ApplicationsTab(QWidget):
         # ── Toolbar row ──────────────────────────────────────────────────────
         tb = QHBoxLayout()
         title = QLabel(_("Saved applications"))
-        title.setFont(QFont("", 11, QFont.Bold))
         title.setObjectName("SectionTitle")
         tb.addWidget(title)
         tb.addStretch(1)
@@ -60,6 +58,7 @@ class ApplicationsTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         header = self.table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setColumnWidth(0, 170)
