@@ -185,6 +185,14 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Remove duplicate jobs and companies from the database.":
             "Remove duplicate jobs and companies from the database.",
         "Run Dedup": "Run Dedup",
+        "Clear Scan Data": "Clear Scan Data",
+        "The database already contains no scanned data.":
+            "The database already contains no scanned data.",
+        "This will permanently delete {jobs} scanned job(s), {runs} scan run(s) and {logs} scan log row(s) from the database.\nSeed CSVs and saved applications are NOT affected. Continue?":
+            "This will permanently delete {jobs} scanned job(s), {runs} scan run(s) and {logs} scan log row(s) from the database.\nSeed CSVs and saved applications are NOT affected. Continue?",
+        "Scan data cleared": "Scan data cleared",
+        "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.":
+            "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.",
         "AI Settings": "AI Settings",
         "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.":
             "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.",
@@ -467,6 +475,14 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Remove duplicate jobs and companies from the database.":
             "Rimuovi lavori e aziende duplicati dal database.",
         "Run Dedup": "Esegui Deduplicazione",
+        "Clear Scan Data": "Cancella Dati Scansione",
+        "The database already contains no scanned data.":
+            "Il database non contiene dati scansionati.",
+        "This will permanently delete {jobs} scanned job(s), {runs} scan run(s) and {logs} scan log row(s) from the database.\\nSeed CSVs and saved applications are NOT affected. Continue?":
+            "Questo eliminerà definitivamente {jobs} lavori scansionati, {runs} esecuzioni di scansione e {logs} righe di registro dal database.\\nI CSV seed e le domande salvate NON saranno interessati. Continuare?",
+        "Scan data cleared": "Dati Scansione Cancellati",
+        "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.":
+            "Rimosso {jobs} lavori, {runs} esecuzioni di scansione e {logs} righe di registro. I CSV seed non sono stati toccati.",
         "AI Settings": "Impostazioni AI",
         "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.":
             "Chiave API del provider AI + prompt per valutazione lavori, eleggibilità (usa il CV dalla scheda AI Personalizza) e generazione documenti.",
@@ -827,6 +843,14 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Data Quality": "Qualità Dati",
         "Remove duplicate jobs and companies from the database.":
             "Rimuovi lavori e aziende duplicati dal database.",
+        "Clear Scan Data": "Borrar Datos de Escaneo",
+        "The database already contains no scanned data.":
+            "La base de datos no contiene datos escaneados.",
+        "This will permanently delete {jobs} scanned job(s), {runs} scan run(s) and {logs} scan log row(s) from the database.\\nSeed CSVs and saved applications are NOT affected. Continue?":
+            "Esto eliminará permanentemente {jobs} trabajo(s) escaneado(s), {runs} ejecución(es) de escaneo y {logs} fila(s) de registro de la base de datos.\\nLos CSV semilla y las aplicaciones guardadas NO serán afectados. ¿Continuar?",
+        "Scan data cleared": "Datos de Escaneo Borrados",
+        "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.":
+            "Se eliminaron {jobs} trabajo(s), {runs} ejecución(es) de escaneo y {logs} fila(s) de registro. Los CSV semilla no fueron tocados.",
         "Run Dedup": "Esegui Deduplicazione",
         "AI Settings": "Impostazioni AI",
         "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.":

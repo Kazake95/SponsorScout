@@ -134,8 +134,11 @@ class ToolsTab(QWidget):
         self.dedup_btn.clicked.connect(self._run_dedup)
         self.stale_btn = QPushButton(_("Clear Stale Data"))
         self.stale_btn.clicked.connect(self._clear_stale_data)
+        self.clear_scan_btn = QPushButton(_("Clear Scan Data"))
+        self.clear_scan_btn.clicked.connect(self._clear_scan_data)
         lay.addWidget(self.dedup_btn)
         lay.addWidget(self.stale_btn)
+        lay.addWidget(self.clear_scan_btn)
         lay.addStretch(1)
         return box
 
@@ -230,6 +233,53 @@ class ToolsTab(QWidget):
                 self, _("Dedup complete"),
                 _("Removed {jobs} duplicate job(s) and {companies} duplicate "
                   "company entry(ies).").format(jobs=jd, companies=cd))
+            self.data_changed.emit()
+        except Exception as exc:
+            QMessageBox.critical(self, _("Error"), str(exc))
+
+    def _clear_scan_data(self):
+        """Wipe ALL scanned data (jobs, scan history, scan logs) from the DB.
+
+        Seed CSVs (the source of truth) and the companies registry are never
+        touched, so the user can start a completely fresh scan run.
+        """
+        try:
+            conn = db.get_connection(self.db_path)
+            try:
+                jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+                runs = conn.execute("SELECT COUNT(*) FROM scan_runs").fetchone()[0]
+                logs = conn.execute("SELECT COUNT(*) FROM scan_log").fetchone()[0]
+                if jobs == 0 and runs == 0 and logs == 0:
+                    QMessageBox.information(
+                        self, _("Clear Scan Data"),
+                        _("The database already contains no scanned data."))
+                    return
+                answer = QMessageBox.question(
+                    self, _("Clear Scan Data"),
+                    _("This will permanently delete {jobs} scanned job(s), "
+                      "{runs} scan run(s) and {logs} scan log row(s) from the "
+                      "database.\nSeed CSVs and saved applications are NOT "
+                      "affected. Continue?").format(
+                          jobs=jobs, runs=runs, logs=logs),
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    return
+                conn.execute("DELETE FROM jobs")
+                conn.execute("DELETE FROM scan_runs")
+                conn.execute("DELETE FROM scan_log")
+                try:
+                    conn.execute("DELETE FROM jobs_fts")
+                except Exception:
+                    pass  # FTS table may not exist in very old DBs
+                conn.commit()
+                conn.execute("VACUUM")
+            finally:
+                conn.close()
+            QMessageBox.information(
+                self, _("Scan data cleared"),
+                _("Removed {jobs} job(s), {runs} scan run(s) and {logs} scan "
+                  "log row(s). Seed CSVs were not touched.").format(
+                      jobs=jobs, runs=runs, logs=logs))
             self.data_changed.emit()
         except Exception as exc:
             QMessageBox.critical(self, _("Error"), str(exc))
