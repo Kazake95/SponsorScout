@@ -1270,6 +1270,15 @@ SEED_UPGRADE = {
     "MSD Netherlands":              {"target_country": "Netherlands", "scope_policy": "job_location"},
     "Nexthink (Germany)":           {"target_country": "Germany", "scope_policy": "job_location"},
     "Pam Panorama":                 {"target_country": "Italy", "scope_policy": "seed_url"},
+    # ── NEW: Italian hotels/retail added 2026-09-05 ───────────────────────────
+    "Eataly Italia":                {"target_country": "Italy", "scope_policy": "seed_url"},
+    "Gruppo UNA":                   {"target_country": "Italy", "scope_policy": "seed_url"},
+    "NH Hotel Group Italy":         {"target_country": "Italy", "scope_policy": "job_location",
+                                     "notes": "URL is generic minorhotels.com/search; job_location scope "
+                                              "ensures only Italy-scoped jobs pass"},
+    "Oniverse":                     {"target_country": "Italy", "scope_policy": "seed_url"},
+    "OVS":                          {"target_country": "Italy", "scope_policy": "seed_url"},
+    "Starhotels":                   {"target_country": "Italy", "scope_policy": "seed_url"},
     # ── Provider API (avoids fragile DOM scraping) ───────────────────────────
     "Airbyte":                      {"provider": "ashby", "board_slug": "airbyte"},
     "American Express":             {"provider": "oracle"},

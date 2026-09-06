@@ -236,10 +236,10 @@ class ToolsTab(QWidget):
             return
         run_id = self.runs_table.item(row, 0).text()
         docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
-        default_path = (docs or ".")
-        default_path += f"/sponsorscout_scan_log_{run_id}.csv"
+        from pathlib import Path as _Path
+        default_path = _Path(docs or ".") / f"sponsorscout_scan_log_{run_id}.csv"
         path, _filt = QFileDialog.getSaveFileName(
-            self, _("Download Scan Log"), default_path,
+            self, _("Download Scan Log"), str(default_path),
             _("CSV files (*.csv);;All files (*.*)"))
         if not path:
             return
@@ -253,8 +253,7 @@ class ToolsTab(QWidget):
                                  .format(error=str(exc)))
             return
         # Verify and report what the file actually contains.
-        from pathlib import Path
-        p = Path(path)
+        p = _Path(path)
         n_log = len(db.get_scan_log(self.db_path, run_id))
         n_events = len(db.get_scan_events(self.db_path, run_id))
         if not p.is_file() or p.stat().st_size <= 0:
