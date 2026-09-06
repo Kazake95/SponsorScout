@@ -119,7 +119,8 @@ from sponsorscout.scanning.jd_support import (
 class ATSScanner:
     def __init__(self, seed_file="company_ATS_seed.csv",
                  output_file="scraped_ats_jobs_v5.csv",
-                 skip_preflight=False, resume=False, cancel_event=None):
+                 skip_preflight=False, resume=False, cancel_event=None,
+                 only_companies=None):
         self.seed_file = seed_file
         self.output_file = output_file
         self.skip_preflight = skip_preflight
@@ -127,6 +128,9 @@ class ATSScanner:
         # Cooperative cancellation for the desktop UI Stop button: checked
         # between targets in run(); never interrupts an in-flight request.
         self.cancel_event = cancel_event
+        # Optional whitelist of company names (CLI --company): when set, only
+        # these targets are scanned.
+        self.only_companies = only_companies
         self.run_id = time.strftime("%Y%m%dT%H%M%S")
         self.detector = JDSupportDetector()
 
@@ -980,6 +984,12 @@ class ATSScanner:
     def run(self):
         import os
         targets = self.read_seed_file()
+        if self.only_companies:
+            wanted = {c.strip().lower() for c in self.only_companies if c and c.strip()}
+            targets = [t for t in targets if t.get("name", "").strip().lower() in wanted]
+            if not targets:
+                print(f"no ATS targets matched only_companies={self.only_companies}")
+                return
         self._preflight_connectivity()
 
         base = self.output_file[:-4] if self.output_file.lower().endswith(".csv") else self.output_file

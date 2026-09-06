@@ -207,11 +207,20 @@ def _ingest_output_csv(db_path, path: Path, run_id: str, source_subtype: str,
                     continue
                 job = _row_to_job(row, source_subtype=source_subtype, run_id=run_id)
                 if job is None:
+                    db.record_scan_event(
+                        db_path, run_id, level="warning", phase="ingest",
+                        company=str(row.get("Company Name") or row.get("Seed Name") or ""),
+                        message="Skipped row (no valid URL / unparsable): "
+                                + str(row.get("Job Title") or "")[:120])
                     continue
                 try:
                     persistence.upsert_job(conn, job)
                 except Exception:
                     logger.exception("Failed to upsert job %s", job.get("url"))
+                    db.record_scan_event(
+                        db_path, run_id, level="error", phase="ingest",
+                        company=job.get("company", ""),
+                        message=f"Failed to ingest job {job.get('url')}")
                     continue
                 if cid:
                     seen_canonical.add(cid)
@@ -229,6 +238,17 @@ def _ingest_scan_log(db_path, path: Path, run_id: str, scanner: str) -> int:
         rows = list(csv.DictReader(f))
     if rows:
         db.record_scan_log_rows(db_path, run_id, scanner, rows)
+        # Elevate per-company failures into the event timeline so hidden errors
+        # that reduce job yield are visible in the downloaded scan analysis.
+        for row in rows:
+            status = str(row.get("Status") or row.get("status") or "").lower()
+            err = (row.get("Error") or row.get("error") or "").strip()
+            if status in ("error", "failed", "partial") or err:
+                db.record_scan_event(
+                    db_path, run_id, level="error", phase=scanner,
+                    company=str(row.get("Company") or row.get("Seed Name") or ""),
+                    message=" | ".join(part for part in
+                                       (err, str(row.get("Diagnostics") or "")) if part)[:2000])
     return len(rows)
 
 
@@ -240,6 +260,45 @@ def _count_seed_rows(path: Path) -> int:
             return max(0, sum(1 for _ in csv.DictReader(f)))
     except OSError:
         return 0
+
+
+def _infer_level(msg: str) -> str:
+    low = msg.lower()
+    if "error" in low or "failed" in low or "exception" in low or "✗" in low:
+        return "error"
+    if low.startswith("warning") or " warn" in low:
+        return "warning"
+    return "info"
+
+
+def _infer_phase(msg: str) -> str:
+    low = msg.lower()
+    if low.startswith("scan "):
+        return "pipeline"
+    if "ats" in low:
+        return "ats"
+    if "career" in low:
+        return "career"
+    if "ingest" in low:
+        return "ingest"
+    return "pipeline"
+
+
+def _event_tee(db_path, run_id: str, progress: ProgressFn) -> ProgressFn:
+    """Wrap a progress callback so every line is also persisted to the run's
+    scan_events timeline (level/phase inferred from the message text)."""
+    def tee(msg: str) -> None:
+        progress(msg)
+        try:
+            db.record_scan_event(
+                db_path, run_id,
+                level=_infer_level(msg),
+                phase=_infer_phase(msg),
+                message=str(msg),
+            )
+        except Exception:  # pragma: no cover - event logging must not crash scans
+            pass
+    return tee
 
 
 class _LiveIngester(threading.Thread):
@@ -292,6 +351,7 @@ class _LiveIngester(threading.Thread):
 def run_scan(method: str = "quick",
              db_path=None,
              cancel_event: threading.Event | None = None,
+             only_companies: list | None = None,
              progress: ProgressFn | None = None) -> dict:
     """Run a full scan campaign and ingest the results.
 
@@ -299,6 +359,9 @@ def run_scan(method: str = "quick",
       * ``quick`` — ATS boards + career pages, no detail-page enrichment.
       * ``full``  — same plus per-job detail-page evidence enrichment
                     (Playwright; significantly slower).
+
+    only_companies: optional list of company names — when given, only those
+      seed targets are scanned (CLI --company).
 
     Must be called from a worker thread (it performs network I/O); the UI
     layer receives progress via ``progress`` and cancellation via the shared
@@ -321,6 +384,9 @@ def run_scan(method: str = "quick",
         db.initialize()
 
     run_id = time.strftime("%Y%m%dT%H%M%S")
+    # Tee every progress line into the run's scan_events timeline for later
+    # download / analysis (phase + level inferred from the message text).
+    progress = _event_tee(db_path, run_id, progress)
     ats_out = out_dir / f"{run_id}_ats_jobs.csv"
     career_out = out_dir / f"{run_id}_career_jobs.csv"
     detail = method == "full"
@@ -343,6 +409,17 @@ def run_scan(method: str = "quick",
 
     n_ats = _count_seed_rows(seed_manager.user_ats_path())
     n_career = _count_seed_rows(seed_manager.user_career_path())
+    if only_companies:
+        wanted = {c.strip().lower() for c in only_companies if c and c.strip()}
+        if wanted:
+            n_ats = sum(
+                1 for r in seed_manager.read_seed_rows(
+                    seed_manager.user_ats_path())["rows"]
+                if r.get("name", "").strip().lower() in wanted)
+            n_career = sum(
+                1 for r in seed_manager.read_seed_rows(
+                    seed_manager.user_career_path())["rows"]
+                if r.get("name", "").strip().lower() in wanted)
     db.start_scan_run(db_path, run_id, method, n_ats, n_career)
     progress(f"Scan {run_id} started: method={method}, "
              f"ATS companies={n_ats}, career companies={n_career}")
@@ -372,6 +449,7 @@ def run_scan(method: str = "quick",
                 seed_file=str(seed_manager.user_ats_path()),
                 output_file=str(ats_out),
                 cancel_event=cancel_event,
+                only_companies=only_companies,
             )
             scanner.run_id = run_id
             ats_module.progress_cb = progress
@@ -399,6 +477,7 @@ def run_scan(method: str = "quick",
                 output_csv=str(career_out),
                 detail_scan=detail,
                 cancel_event=cancel_event,
+                only_companies=only_companies,
             )
             scanner.run_id = run_id
             career_module.progress_cb = progress

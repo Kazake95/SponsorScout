@@ -26,11 +26,26 @@ def _configure_connection(conn, db_path=DB_PATH):
     return conn
 
 
+def _regexp_like(pattern, value):
+    """SQLite REGEXP operator backed by Python's re (compiled once manually).
+    Returns 1 if value matches pattern, else 0. Invalid patterns match nothing
+    (the caller validates and falls back to LIKE on invalid input)."""
+    import re
+    if value is None:
+        return 0
+    try:
+        return 1 if re.search(pattern, str(value)) else 0
+    except re.error:
+        return 0
+
+
 def get_connection(db_path=DB_PATH):
     db_path = Path(db_path).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     ensure_user_data_dir()
-    return _configure_connection(sqlite3.connect(str(db_path), timeout=30.0))
+    conn = _configure_connection(sqlite3.connect(str(db_path), timeout=30.0))
+    conn.create_function("REGEXP", 2, _regexp_like)
+    return conn
 
 
 def _apply_migrations(conn):
@@ -107,6 +122,16 @@ def _apply_migrations(conn):
             seed_url TEXT DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_scan_log_run ON scan_log(run_id);
+        CREATE TABLE IF NOT EXISTS scan_events (
+            id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP,
+            level TEXT DEFAULT 'info',
+            phase TEXT DEFAULT 'pipeline',
+            company TEXT DEFAULT '',
+            message TEXT DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_scan_events_run ON scan_events(run_id);
     """)
 
     # ── Legacy tables removed with the Tkinter→PySide6 restart ──────────────
@@ -182,7 +207,8 @@ def initialize(db_path=DB_PATH):
 def search_jobs(db_path, title="", company="", location="", country="All", source_type="All",
                 verified_only=True, sponsorship_only=False, active_only=True,
                 remote_filter="All", eu_blue_card_only=False, relocation_only=False,
-                sponsorship_filter="All", blue_card_filter="All", relocation_filter="All"):
+                sponsorship_filter="All", blue_card_filter="All", relocation_filter="All",
+                regex=False):
     conn = None
     try:
         conn = get_connection(db_path)
@@ -202,15 +228,32 @@ def search_jobs(db_path, title="", company="", location="", country="All", sourc
                    FROM jobs WHERE 1=1"""
         params = []
 
-        if title:
-            query += " AND lower(title) LIKE ?"
-            params.append(f"%{title.lower()}%")
-        if company:
-            query += " AND lower(company) LIKE ?"
-            params.append(f"%{company.lower()}%")
-        if location:
-            query += " AND lower(location) LIKE ?"
-            params.append(f"%{location.lower()}%")
+        # Validate regex inputs up front so we can fall back to LIKE on a bad
+        # pattern instead of silently matching nothing.
+        import re as _re
+        if regex:
+            for pat in (title, company, location):
+                if pat:
+                    try:
+                        _re.compile(pat)
+                    except _re.error:
+                        regex = False
+                        break
+
+        def _add_text_filter(column, value):
+            nonlocal query, params
+            if not value:
+                return
+            if regex:
+                query += f" AND {column} REGEXP ?"
+                params.append(value)
+            else:
+                query += f" AND lower({column}) LIKE ?"
+                params.append(f"%{value.lower()}%")
+
+        _add_text_filter("title", title)
+        _add_text_filter("company", company)
+        _add_text_filter("location", location)
         if country and country != "All":
             # Match jobs whose country matches the filter, or remote roles
             # that are explicitly EU/EMEA remote and therefore relevant to the
@@ -324,7 +367,10 @@ def get_dashboard_stats(db_path):
     try:
         conn = get_connection(db_path)
         stats = {
-            "companies": conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0],
+            "companies": conn.execute(
+                "SELECT COUNT(DISTINCT company) FROM jobs "
+                "WHERE verified_active = 1 AND is_expired = 0 AND company <> ''"
+            ).fetchone()[0],
             "verified_jobs": conn.execute("SELECT COUNT(*) FROM jobs WHERE verified_active = 1 AND is_expired = 0").fetchone()[0],
             "discovery_jobs": conn.execute("SELECT COUNT(*) FROM jobs WHERE source_type = 'discovery'").fetchone()[0],
             # BUGFIX (round 1): previous version used a per-company COUNT(DISTINCT)
@@ -359,10 +405,21 @@ def get_dashboard_top_companies(db_path, limit=8):
     try:
         conn = get_connection(db_path)
         rows = conn.execute("""
-            SELECT company, country, COUNT(*) as job_count, MAX(sponsorship_score) as max_sponsor, MAX(match_score) as max_match
-            FROM jobs
-            WHERE verified_active = 1 AND is_expired = 0
-            GROUP BY company, country
+            SELECT company,
+                   (SELECT country FROM jobs j2
+                    WHERE j2.company = j1.company
+                      AND j2.verified_active = 1 AND j2.is_expired = 0
+                      AND j2.country <> ''
+                    GROUP BY j2.country
+                    ORDER BY COUNT(*) DESC, j2.country ASC
+                    LIMIT 1) AS country,
+                   COUNT(*) as job_count,
+                   MAX(sponsorship_score) as max_sponsor,
+                   MAX(match_score) as max_match
+            FROM jobs j1
+            WHERE j1.verified_active = 1 AND j1.is_expired = 0
+              AND j1.company <> ''
+            GROUP BY j1.company
             ORDER BY max_sponsor DESC, max_match DESC, job_count DESC
             LIMIT ?
         """, (limit,)).fetchall()
@@ -525,7 +582,7 @@ def record_scan_log_rows(db_path, run_id: str, scanner: str, rows):
                     int(r.get("duplicates", r.get("Duplicates", 0)) or 0),
                     int(r.get("rejected_scope", r.get("Rejected Scope", 0)) or 0),
                     (r.get("error") or r.get("Error") or ""),
-                    (r.get("diagnostics") or r.get("Diagnostics") or "")[:4000],
+                    (r.get("diagnostics") or r.get("Diagnostics") or "")[:8000],
                     float(r.get("duration_sec", r.get("Duration Sec", 0)) or 0),
                     (r.get("seed_url") or r.get("Seed URL") or ""),
                 )
@@ -573,6 +630,106 @@ def get_scan_log(db_path, run_id: str):
     finally:
         if conn:
             conn.close()
+
+
+def get_scan_run(db_path, run_id: str):
+    """Return the summary row for one scan run (or None if it does not exist)."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        return conn.execute(
+            """SELECT run_id, method, started_at, finished_at, status, error,
+                      targets_ok, targets_empty, targets_error,
+                      jobs_found, jobs_quarantined, jobs_duplicates,
+                      ats_companies, career_companies
+               FROM scan_runs WHERE run_id=?""",
+            (run_id,),
+        ).fetchone()
+    finally:
+        if conn:
+            conn.close()
+
+
+def record_scan_event(db_path, run_id: str, level: str = "info",
+                      phase: str = "pipeline", message: str = "",
+                      company: str = ""):
+    """Append one entry to the run's granular event timeline."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        conn.execute(
+            """INSERT INTO scan_events (run_id, level, phase, company, message)
+               VALUES (?, ?, ?, ?, ?)""",
+            (run_id, level, phase, company, str(message)[:2000]),
+        )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_scan_events(db_path, run_id: str):
+    """Chronological event timeline for one scan run (oldest first)."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        return conn.execute(
+            """SELECT ts, level, phase, company, message
+               FROM scan_events WHERE run_id=? ORDER BY id ASC""",
+            (run_id,),
+        ).fetchall()
+    finally:
+        if conn:
+            conn.close()
+
+
+def export_scan_run_csv(db_path, run_id: str) -> str:
+    """Render one scan run as a CSV for downloading (summary + per-company
+    log + event timeline).  Pure function on the DB so it is testable without
+    a GUI."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+
+    run = get_scan_run(db_path, run_id)
+    if run is None:
+        raise ValueError(f"Scan run not found: {run_id}")
+
+    writer.writerow([f"Run ID,{run['run_id']}"])
+    writer.writerow([f"Method,{run['method']}"])
+    writer.writerow([f"Started,{run['started_at'] or ''}"])
+    writer.writerow([f"Finished,{run['finished_at'] or ''}"])
+    writer.writerow([f"Status,{run['status'] or ''}"])
+    writer.writerow([f"Jobs Found,{run['jobs_found'] or 0}"])
+    writer.writerow([f"Duplicates,{run['jobs_duplicates'] or 0}"])
+    writer.writerow([f"Quarantined,{run['jobs_quarantined'] or 0}"])
+    writer.writerow([f"Targets OK,{run['targets_ok'] or 0}"])
+    writer.writerow([f"Targets Empty,{run['targets_empty'] or 0}"])
+    writer.writerow([f"Targets Error,{run['targets_error'] or 0}"])
+    writer.writerow([f"Run Error,{run['error'] or ''}"])
+    buf.write("\n")
+
+    writer.writerow([f"Per-company scan log"])
+    writer.writerow(["Seed", "Company", "Source", "Target Country", "Status",
+                     "Provider", "Jobs", "Quar.", "Dups", "Scope Rej.",
+                     "Error", "Diagnostics", "Duration Sec", "Seed URL"])
+    for row in get_scan_log(db_path, run_id):
+        writer.writerow([row[c] for c in row.keys()])
+    buf.write("\n")
+
+    events = []
+    try:
+        events = get_scan_events(db_path, run_id)
+    except Exception:  # pragma: no cover - old DBs may lack scan_events
+        pass
+    writer.writerow(["Event timeline"])
+    writer.writerow(["Timestamp", "Level", "Phase", "Company", "Message"])
+    for ev in events:
+        writer.writerow([ev["ts"], ev["level"], ev["phase"],
+                         ev["company"], ev["message"]])
+    return buf.getvalue()
 
 
 def get_distinct_remote_types(db_path) -> list[str]:

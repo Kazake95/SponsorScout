@@ -7,11 +7,12 @@ per-run scan history view backed by the scan_runs / scan_log tables.
 
 import threading
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QStandardPaths, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from sponsorscout.application.scan_coordinator import ScanCoordinator
@@ -21,8 +22,9 @@ from sponsorscout.i18n import _
 
 HEADERS_RUNS = ["Run ID", "Method", "Started", "Status", "Jobs", "Dups",
                 "Quarantined", "Errors"]
-HEADERS_LOG = ["Seed", "Company", "Status", "Provider", "Jobs", "Quar.",
-               "Dups", "Scope Rej.", "Error"]
+HEADERS_LOG = ["Seed", "Company", "Source", "Target Country", "Status",
+               "Provider", "Jobs", "Quar.", "Dups", "Scope Rej.",
+               "Error", "Diagnostics", "Duration (s)", "Seed URL"]
 
 
 class ScanLogDialog(QDialog):
@@ -31,19 +33,34 @@ class ScanLogDialog(QDialog):
     def __init__(self, db_path: str, run_id: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Scan log — {run_id}")
-        self.resize(900, 500)
+        self.resize(1280, 620)
         lay = QVBoxLayout(self)
         table = QTableWidget(0, len(HEADERS_LOG))
         table.setHorizontalHeaderLabels(HEADERS_LOG)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setAlternatingRowColors(True)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        tooltip_cols = {10, 11}  # Error / Diagnostics are long free-text cols
         for row in db.get_scan_log(db_path, run_id):
             r = table.rowCount()
             table.insertRow(r)
             for col, val in enumerate(row):
-                table.setItem(r, col, QTableWidgetItem(str(val or "")))
+                text = str(val or "")
+                item = QTableWidgetItem(text)
+                if col in tooltip_cols and text:
+                    item.setToolTip(text)
+                table.setItem(r, col, item)
+        table.resizeColumnsToContents()
+        # Ensure very wide diagnostic columns don't dominate the window.
+        extra = {2, 3, 13}  # Source / Target Country / Seed URL
+        for col in list(range(len(HEADERS_LOG))):
+            if header.sectionSize(col) > 420:
+                header.resizeSection(col, 420)
+            elif col not in extra and header.sectionSize(col) < 90:
+                header.resizeSection(col, 90)
         lay.addWidget(table)
 
 
@@ -123,6 +140,9 @@ class ToolsTab(QWidget):
         self.view_log_btn = QPushButton(_("View Per-Company Log"))
         self.view_log_btn.clicked.connect(self._view_run_log)
         row.addWidget(self.view_log_btn)
+        self.download_log_btn = QPushButton(_("Download Scan Log"))
+        self.download_log_btn.clicked.connect(self._export_run_log)
+        row.addWidget(self.download_log_btn)
         row.addStretch(1)
         lay.addLayout(row)
         return box
@@ -206,6 +226,53 @@ class ToolsTab(QWidget):
         run_id = self.runs_table.item(row, 0).text()
         ScanLogDialog(self.db_path, run_id, self).exec()
 
+    def _export_run_log(self):
+        """Download the selected run's full scan analysis (summary + per-company
+        log + event timeline) as a CSV file."""
+        row = self.runs_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, _("SponsorScout"),
+                                    _("Select a scan run first."))
+            return
+        run_id = self.runs_table.item(row, 0).text()
+        docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+        default_path = (docs or ".")
+        default_path += f"/sponsorscout_scan_log_{run_id}.csv"
+        path, _filt = QFileDialog.getSaveFileName(
+            self, _("Download Scan Log"), default_path,
+            _("CSV files (*.csv);;All files (*.*)"))
+        if not path:
+            return
+        try:
+            content = db.export_scan_run_csv(self.db_path, run_id)
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                f.write(content)
+        except Exception as exc:
+            QMessageBox.critical(self, _("Error"),
+                                 _("Could not save scan log:\n{error}")
+                                 .format(error=str(exc)))
+            return
+        # Verify and report what the file actually contains.
+        from pathlib import Path
+        p = Path(path)
+        n_log = len(db.get_scan_log(self.db_path, run_id))
+        n_events = len(db.get_scan_events(self.db_path, run_id))
+        if not p.is_file() or p.stat().st_size <= 0:
+            QMessageBox.critical(
+                self, _("Error"),
+                _("The file appears empty:\n{path}").format(path=path))
+            return
+        answer = QMessageBox.information(
+            self, _("Scan log downloaded"),
+            _("Scan log ({bytes} bytes, {rows} company row(s), {events} "
+              "event(s)) saved to:\n{path}")
+            .format(bytes=p.stat().st_size, rows=n_log, events=n_events,
+                    path=path),
+            QMessageBox.Ok | QMessageBox.Open,
+            QMessageBox.Ok)
+        if answer == QMessageBox.Open:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(p.parent)))
+
     def refresh(self):
         rows = db.list_scan_runs(self.db_path, limit=25)
         self.runs_table.setRowCount(0)
@@ -267,6 +334,7 @@ class ToolsTab(QWidget):
                 conn.execute("DELETE FROM jobs")
                 conn.execute("DELETE FROM scan_runs")
                 conn.execute("DELETE FROM scan_log")
+                conn.execute("DELETE FROM scan_events")
                 try:
                     conn.execute("DELETE FROM jobs_fts")
                 except Exception:
@@ -290,13 +358,25 @@ class ToolsTab(QWidget):
             try:
                 cur = conn.execute("DELETE FROM jobs WHERE is_expired=1")
                 deleted = cur.rowcount
-                conn.execute("VACUUM")
+                # Commit BEFORE VACUUM: Python's sqlite3 auto-starts a
+                # transaction on the DELETE, and VACUUM cannot run inside one
+                # ("cannot VACUUM from within a transaction"). Committing first
+                # persists the delete and lets VACUUM run cleanly.
+                conn.commit()
+                if deleted > 0:
+                    conn.execute("VACUUM")
             finally:
                 conn.close()
-            QMessageBox.information(
-                self, _("Stale data cleared"),
-                _("Removed {n} expired job(s) from the "
-                  "database.").format(n=deleted))
+            if deleted > 0:
+                QMessageBox.information(
+                    self, _("Stale data cleared"),
+                    _("Removed {n} expired job(s) from the database.")
+                    .format(n=deleted))
+            else:
+                QMessageBox.information(
+                    self, _("Stale data cleared"),
+                    _("No expired jobs to remove — the database is already "
+                      "clean."))
             self.data_changed.emit()
         except Exception as exc:
             QMessageBox.critical(self, _("Error"), str(exc))

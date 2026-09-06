@@ -127,7 +127,8 @@ class DashboardTab(QWidget):
         for company, country, job_count, max_sponsor, _max_match in rows:
             r = self.companies_table.rowCount()
             self.companies_table.insertRow(r)
-            for col, val in enumerate((company, country, job_count, max_sponsor)):
+            display_country = (country or "").strip() or _("Unknown")
+            for col, val in enumerate((company, display_country, job_count, max_sponsor)):
                 item = QTableWidgetItem(str(val if val is not None else ""))
                 if col >= 2:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)

@@ -99,6 +99,12 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "EU Blue Card": "EU Blue Card",
         "Relocation": "Relocation",
         "All": "All",
+        "Regex": "Regex",
+        "Enable regular-expression matching in Title / Company / Location filters (e.g. ^senior (backend|platform)$).":
+            "Enable regular-expression matching in Title / Company / Location filters (e.g. ^senior (backend|platform)$).",
+        "Invalid regular expression": "Invalid regular expression",
+        "Regex disabled — invalid pattern:\n{error}":
+            "Regex disabled — invalid pattern:\n{error}",
         "Any (incl. unknown)": "Any (incl. unknown)",
         "Unknown / Not classified": "Unknown / Not classified",
         "Intern": "Intern",
@@ -193,6 +199,21 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Scan data cleared": "Scan data cleared",
         "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.":
             "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.",
+        "Stale data cleared": "Stale data cleared",
+        "Removed {n} expired job(s) from the database.":
+            "Removed {n} expired job(s) from the database.",
+        "No expired jobs to remove — the database is already clean.":
+            "No expired jobs to remove — the database is already clean.",
+        "View Per-Company Log": "View Per-Company Log",
+        "Download Scan Log": "Download Scan Log",
+        "Select a scan run first.": "Select a scan run first.",
+        "Scan log downloaded": "Scan log downloaded",
+        "Scan log saved to:\n{path}": "Scan log saved to:\n{path}",
+        "CSV files (*.csv);;All files (*.*)": "CSV files (*.csv);;All files (*.*)",
+        "Could not save scan log:\n{error}": "Could not save scan log:\n{error}",
+        "The file appears empty:\n{path}": "The file appears empty:\n{path}",
+        "Scan log ({bytes} bytes, {rows} company row(s), {events} event(s)) saved to:\n{path}":
+            "Scan log ({bytes} bytes, {rows} company row(s), {events} event(s)) saved to:\n{path}",
         "AI Settings": "AI Settings",
         "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.":
             "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.",
@@ -384,6 +405,13 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Balanced": "Bilanciato",
         "Strict quality": "Qualità rigorosa",
         "Visa sponsor": "Sponsor visto",
+        "Regex": "Regex",
+        "Enable regular-expression matching in Title / Company / Location filters (e.g. ^senior (backend|platform)$).":
+            "Abilita la corrispondenza con espressioni regolari nei filtri Posizione / Azienda / Località (es. ^senior (backend|platform)$).",
+        "Invalid regular expression": "Espressione regolare non valida",
+        "Regex disabled — invalid pattern:\n{error}":
+            "Regex disabilitato — pattern non valido:\n{error}",
+        "Any (incl. unknown)": "Qualsiasi (incl. sconosciuto)",
         "Local EU": "UE locale",
         "Remote EMEA": "Remoto EMEA",
         "Blue Card focus": "Focus Blue Card",
@@ -483,6 +511,21 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Scan data cleared": "Dati Scansione Cancellati",
         "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.":
             "Rimosso {jobs} lavori, {runs} esecuzioni di scansione e {logs} righe di registro. I CSV seed non sono stati toccati.",
+        "Stale data cleared": "Dati Obsoleti Cancellati",
+        "Removed {n} expired job(s) from the database.":
+            "Rimossi {n} lavori scaduti dal database.",
+        "No expired jobs to remove — the database is already clean.":
+            "Nessun lavoro scaduto da rimuovere: il database è già pulito.",
+        "View Per-Company Log": "Visualizza Registro per Azienda",
+        "Download Scan Log": "Scarica Registro di Scansione",
+        "Select a scan run first.": "Seleziona prima un'esecuzione di scansione.",
+        "Scan log downloaded": "Registro di scansione scaricato",
+        "Scan log saved to:\n{path}": "Registro di scansione salvato in:\n{path}",
+        "CSV files (*.csv);;All files (*.*)": "File CSV (*.csv);;Tutti i file (*.*)",
+        "Could not save scan log:\n{error}": "Impossibile salvare il registro di scansione:\n{error}",
+        "The file appears empty:\n{path}": "Il file risulta vuoto:\n{path}",
+        "Scan log ({bytes} bytes, {rows} company row(s), {events} event(s)) saved to:\n{path}":
+            "Registro di scansione ({bytes} byte, {rows} righe azienda, {events} eventi) salvato in:\n{path}",
         "AI Settings": "Impostazioni AI",
         "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.":
             "Chiave API del provider AI + prompt per valutazione lavori, eleggibilità (usa il CV dalla scheda AI Personalizza) e generazione documenti.",
@@ -759,6 +802,14 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "EU Blue Card": "Carta Blu UE",
         "Relocation": "Ricollocazione",
         "All": "Tutti",
+        "All": "Tutti",
+        "Regex": "Regex",
+        "Enable regular-expression matching in Title / Company / Location filters (e.g. ^senior (backend|platform)$).":
+            "Abilita la corrispondenza con espressioni regolari nei filtri Posizione / Azienda / Località (es. ^senior (backend|platform)$).",
+        "Invalid regular expression": "Espressione regolare non valida",
+        "Regex disabled — invalid pattern:\n{error}":
+            "Regex disabilitato — pattern non valido:\n{error}",
+        "Any (incl. unknown)": "Qualsiasi (incl. sconosciuto)",
         "Any (incl. unknown)": "Qualsiasi (incl. sconosciuto)",
         "Unknown / Not classified": "Sconosciuto / Non classificato",
         "Intern": "Stage",
@@ -851,6 +902,21 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Scan data cleared": "Datos de Escaneo Borrados",
         "Removed {jobs} job(s), {runs} scan run(s) and {logs} scan log row(s). Seed CSVs were not touched.":
             "Se eliminaron {jobs} trabajo(s), {runs} ejecución(es) de escaneo y {logs} fila(s) de registro. Los CSV semilla no fueron tocados.",
+        "Stale data cleared": "Datos Obsoletos Borrados",
+        "Removed {n} expired job(s) from the database.":
+            "Se eliminaron {n} trabajo(s) caducado(s) de la base de datos.",
+        "No expired jobs to remove — the database is already clean.":
+            "No hay trabajos caducados que eliminar: la base de datos ya está limpia.",
+        "View Per-Company Log": "Ver Registro por Empresa",
+        "Download Scan Log": "Descargar Registro de Escaneo",
+        "Select a scan run first.": "Seleccione primero una ejecución de escaneo.",
+        "Scan log downloaded": "Registro de escaneo descargado",
+        "Scan log saved to:\n{path}": "Registro de escaneo guardado en:\n{path}",
+        "CSV files (*.csv);;All files (*.*)": "Archivos CSV (*.csv);;Todos los archivos (*.*)",
+        "Could not save scan log:\n{error}": "No se pudo guardar el registro de escaneo:\n{error}",
+        "The file appears empty:\n{path}": "El archivo parece vacío:\n{path}",
+        "Scan log ({bytes} bytes, {rows} company row(s), {events} event(s)) saved to:\n{path}":
+            "Registro de escaneo ({bytes} bytes, {rows} fila(s) de empresa, {events} evento(s)) guardado en:\n{path}",
         "Run Dedup": "Esegui Deduplicazione",
         "AI Settings": "Impostazioni AI",
         "AI provider API key + prompts for job rating, eligibility (uses your CV from AI Tailor tab), and document generation.":

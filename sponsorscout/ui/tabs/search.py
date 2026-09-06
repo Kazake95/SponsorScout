@@ -55,6 +55,10 @@ class SearchTab(QWidget):
         self.sponsor_check = QCheckBox(_("Sponsor"))
         self.bluecard_check = QCheckBox(_("Blue Card"))
         self.reloc_check = QCheckBox(_("Reloc"))
+        self.regex_check = QCheckBox(_("Regex"))
+        self.regex_check.setToolTip(
+            _("Enable regular-expression matching in Title / Company / Location "
+              "filters (e.g. ^senior (backend|platform)$)."))
         self.search_btn = QPushButton(_("Search"))
         self.search_btn.setObjectName("Primary")
         self.clear_btn = QPushButton(_("Clear"))
@@ -66,6 +70,7 @@ class SearchTab(QWidget):
         filters.addWidget(self.sponsor_check)
         filters.addWidget(self.bluecard_check)
         filters.addWidget(self.reloc_check)
+        filters.addWidget(self.regex_check)
         filters.addWidget(self.search_btn)
         filters.addWidget(self.clear_btn)
         root.addLayout(filters)
@@ -114,6 +119,23 @@ class SearchTab(QWidget):
             combo.blockSignals(False)
 
     def run_search(self):
+        # Validate regex patterns up front; fall back to substring search and
+        # inform the user on an invalid pattern instead of returning nothing.
+        use_regex = self.regex_check.isChecked()
+        if use_regex:
+            import re as _re
+            for pat in (self.title_edit.text(), self.company_edit.text(),
+                        self.location_edit.text()):
+                if pat.strip():
+                    try:
+                        _re.compile(pat)
+                    except _re.error as exc:
+                        QMessageBox.warning(
+                            self, _("Invalid regular expression"),
+                            _("Regex disabled — invalid pattern:\n{error}")
+                            .format(error=str(exc)))
+                        use_regex = False
+                        break
         rows = db.search_jobs(
             self.db_path,
             title=self.title_edit.text().strip(),
@@ -124,6 +146,7 @@ class SearchTab(QWidget):
             sponsorship_only=self.sponsor_check.isChecked(),
             eu_blue_card_only=self.bluecard_check.isChecked(),
             relocation_only=self.reloc_check.isChecked(),
+            regex=use_regex,
         )
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
@@ -154,7 +177,8 @@ class SearchTab(QWidget):
             edit.clear()
         self.country_combo.setCurrentIndex(0)
         self.remote_combo.setCurrentIndex(0)
-        for check in (self.sponsor_check, self.bluecard_check, self.reloc_check):
+        for check in (self.sponsor_check, self.bluecard_check, self.reloc_check,
+                      self.regex_check):
             check.setChecked(False)
         self.run_search()
 
@@ -204,4 +228,8 @@ class SearchTab(QWidget):
         self.sponsor_check.setText(_("Sponsor"))
         self.bluecard_check.setText(_("Blue Card"))
         self.reloc_check.setText(_("Reloc"))
+        self.regex_check.setText(_("Regex"))
+        self.regex_check.setToolTip(
+            _("Enable regular-expression matching in Title / Company / Location "
+              "filters (e.g. ^senior (backend|platform)$)."))
         self.table.setHorizontalHeaderLabels(HEADERS)

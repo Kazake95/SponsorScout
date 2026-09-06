@@ -34,19 +34,24 @@ def main() -> None:
 
     if args.company:
         from sponsorscout.application import seed_manager
-        matches = [r for r in seed_manager.load_seed_rows(
+        matches = [r for r in seed_manager.read_seed_rows(
             seed_manager.user_ats_path())["rows"]
                    if args.company.lower() in (r.get("name") or "").lower()]
-        matches += [r for r in seed_manager.load_seed_rows(
+        matches += [r for r in seed_manager.read_seed_rows(
             seed_manager.user_career_path())["rows"]
                     if args.company.lower() in (r.get("name") or "").lower()]
         if not matches:
             print(f"No company matching '{args.company}' found in seeds.")
             sys.exit(1)
-        print(f"Found {len(matches)} matching company/companies.")
+        only_companies = [m["name"] for m in matches]
+        print(f"Found {len(matches)} matching company/companies: "
+              f"{', '.join(only_companies)}")
+    else:
+        only_companies = None
 
     print(f"Scanning (method={method})…")
     summary = pipeline.run_scan(method=method, db_path=DB_PATH,
+                                only_companies=only_companies,
                                 progress=lambda msg: print(msg, flush=True))
     status = summary.get("status", "error")
     print(f"Scan {status}: ingested={summary.get('ingested', 0)}, "

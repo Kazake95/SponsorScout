@@ -1308,7 +1308,8 @@ SEED_UPGRADE = {
 class CareerPortalScanner:
     def __init__(self, input_csv="company_Career_seed.csv", output_csv="scraped_jobs_v7.csv",
                  max_workers=3, detail_scan=False, resume=False,
-                 allow_synthetic=False, skip_preflight=False, cancel_event=None):
+                 allow_synthetic=False, skip_preflight=False, cancel_event=None,
+                 only_companies=None):
         self.input_csv = input_csv
         self.output_csv = output_csv
         self.max_workers = max_workers
@@ -1318,6 +1319,9 @@ class CareerPortalScanner:
         # Cooperative cancellation for the desktop UI Stop button: checked
         # before submitting each crawl target; in-flight targets finish.
         self.cancel_event = cancel_event
+        # Optional whitelist of company names (CLI --company): when set, only
+        # these targets are scanned.
+        self.only_companies = only_companies
         self.run_id = time.strftime("%Y%m%dT%H%M%S")
         self.config = ProductionScannerConfig()
         self.config.PREFLIGHT_ENABLED = not bool(skip_preflight)
@@ -4259,6 +4263,12 @@ class CareerPortalScanner:
         import concurrent.futures as cf
 
         targets = self.read_seed_file()
+        if self.only_companies:
+            wanted = {c.strip().lower() for c in self.only_companies if c and c.strip()}
+            targets = [t for t in targets if t.get("name", "").strip().lower() in wanted]
+            if not targets:
+                print(f"no career targets matched only_companies={self.only_companies}")
+                return
         crawl_start = time.monotonic()
         self._last_activity = time.monotonic()
         self._detail_lock = threading.Lock()

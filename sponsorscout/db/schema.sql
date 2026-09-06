@@ -119,6 +119,16 @@ CREATE TABLE IF NOT EXISTS scan_log (
     seed_url TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_scan_log_run ON scan_log(run_id);
+CREATE TABLE IF NOT EXISTS scan_events (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    ts TEXT DEFAULT CURRENT_TIMESTAMP,
+    level TEXT DEFAULT 'info',
+    phase TEXT DEFAULT 'pipeline',
+    company TEXT DEFAULT '',
+    message TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scan_events_run ON scan_events(run_id);
 
 CREATE TABLE IF NOT EXISTS applications (
     id INTEGER PRIMARY KEY,
