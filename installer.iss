@@ -116,7 +116,7 @@ begin
       else
       begin
         Log('Failed to create AppData dir: ' + AppDir);
-        messagebox.showinfo('Warning', 'Failed to create AppData folder. Database features may be restricted.');
+        MsgBox('Failed to create AppData folder. Database features may be restricted.', mbCriticalError, 'Warning');
       end;
     end;
   end;

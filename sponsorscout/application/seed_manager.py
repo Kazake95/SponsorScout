@@ -81,6 +81,51 @@ def ensure_user_seeds(force: bool = False) -> Tuple[Path, Path]:
     return user_ats_path(), user_career_path()
 
 
+def _row_key(row: dict) -> tuple:
+    """Identity key for a seed row: (lowercase name, lowercase URL)."""
+    return ((row.get("name") or "").casefold(),
+            (row.get("careers_url") or "").casefold())
+
+
+def merge_bundled_seeds(log_fn=print) -> dict:
+    """Reconcile bundled seeds with the user's mutable copies.
+
+    On first run the bundled defaults are copied into the user data dir and
+    everything thereafter reads those copies (so the packaged build stays
+    read-only and the user can edit). That meant newer companies added to the
+    bundled seeds never reached existing installs.
+
+    This appends any bundled rows that are missing from the user copy
+    (matched by name + careers_url). Existing / user-added rows are never
+    modified or removed. Returns {"ats": N, "career": N} = rows added.
+    """
+    ensure_user_seeds()
+    added = {"ats": 0, "career": 0}
+    for label, bundled, user in (
+        ("ats", bundled_ats_path(), user_ats_path()),
+        ("career", bundled_career_path(), user_career_path()),
+    ):
+        bundled_data = read_seed_rows(bundled)
+        user_data = read_seed_rows(user)
+        existing = {_row_key(r) for r in user_data["rows"]}
+        new_rows = [
+            r for r in bundled_data["rows"] if _row_key(r) not in existing
+        ]
+        if not new_rows:
+            continue
+        # Preserve the user's column order; append any extra bundled columns.
+        cols = list(user_data["columns"])
+        for c in bundled_data["columns"]:
+            if c not in cols:
+                cols.append(c)
+        merged = list(user_data["rows"]) + new_rows
+        write_seed_rows(user, cols, merged)
+        added[label] = len(new_rows)
+        log_fn(f"Seed update: added {len(new_rows)} new {label} "
+               f"companies from bundled seeds")
+    return added
+
+
 def read_seed_rows(path: Path) -> dict:
     """Read a seed CSV into ``{"columns": [...], "rows": [dict, ...]}``.
 

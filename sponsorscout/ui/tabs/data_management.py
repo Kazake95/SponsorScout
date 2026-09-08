@@ -149,30 +149,41 @@ class SeedEditor(QWidget):
         lay.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
-        add_btn = QPushButton(_("Add…"))
-        add_btn.setObjectName("Primary")
-        add_btn.clicked.connect(self._add_row)
-        edit_btn = QPushButton(_("Edit…"))
-        edit_btn.clicked.connect(self._edit_row)
-        del_btn = QPushButton(_("Delete"))
-        del_btn.clicked.connect(self._delete_row)
-        buttons.addWidget(add_btn)
-        buttons.addWidget(edit_btn)
-        buttons.addWidget(del_btn)
+        self.add_btn = QPushButton(_("Add…"))
+        self.add_btn.setObjectName("Primary")
+        self.add_btn.clicked.connect(self._add_row)
+        self.edit_btn = QPushButton(_("Edit…"))
+        self.edit_btn.clicked.connect(self._edit_row)
+        self.delete_btn = QPushButton(_("Delete"))
+        self.delete_btn.clicked.connect(self._delete_row)
+        buttons.addWidget(self.add_btn)
+        buttons.addWidget(self.edit_btn)
+        buttons.addWidget(self.delete_btn)
         buttons.addStretch(1)
-        save_btn = QPushButton(_("Save to CSV"))
-        save_btn.clicked.connect(self.save)
-        reload_btn = QPushButton(_("Reload"))
-        reload_btn.clicked.connect(self.load)
-        reset_btn = QPushButton(_("Reset to bundled defaults"))
-        reset_btn.setToolTip(_("Discard all edits and restore the seed file "
+        self.save_btn = QPushButton(_("Save to CSV"))
+        self.save_btn.clicked.connect(self.save)
+        self.reload_btn = QPushButton(_("Reload"))
+        self.reload_btn.clicked.connect(self.load)
+        self.reset_btn = QPushButton(_("Reset to bundled defaults"))
+        self.reset_btn.setToolTip(_("Discard all edits and restore the seed file "
                                "shipped with the application."))
-        reset_btn.clicked.connect(self._reset_to_bundled)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(reload_btn)
-        buttons.addWidget(reset_btn)
+        self.reset_btn.clicked.connect(self._reset_to_bundled)
+        buttons.addWidget(self.save_btn)
+        buttons.addWidget(self.reload_btn)
+        buttons.addWidget(self.reset_btn)
         lay.addLayout(buttons)
         self.load()
+
+    # ── i18n ─────────────────────────────────────────────────────────────────
+    def retranslate(self):
+        self.add_btn.setText(_("Add…"))
+        self.edit_btn.setText(_("Edit…"))
+        self.delete_btn.setText(_("Delete"))
+        self.save_btn.setText(_("Save to CSV"))
+        self.reload_btn.setText(_("Reload"))
+        self.reset_btn.setText(_("Reset to bundled defaults"))
+        self.reset_btn.setToolTip(_("Discard all edits and restore the seed "
+                                    "file shipped with the application."))
 
     # ── Data operations ──────────────────────────────────────────────────────
     def load(self):
@@ -325,3 +336,13 @@ class DataManagementTab(QWidget):
 
         self.ats_editor.data_changed.connect(self.seeds_changed)
         self.career_editor.data_changed.connect(self.seeds_changed)
+
+        self._tabs = tabs
+        self._hint = hint
+
+    # ── i18n ──────────────────────────────────────────────────────────────
+    def retranslate(self):
+        self._tabs.setTabText(0, _("ATS portals"))
+        self._tabs.setTabText(1, _("Career portals"))
+        self.ats_editor.retranslate()
+        self.career_editor.retranslate()

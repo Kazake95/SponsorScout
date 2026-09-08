@@ -374,8 +374,10 @@ def run_scan(method: str = "quick",
     out_dir = paths.ensure_scan_output_dir()
     paths.ensure_user_data_dir()
 
-    # Make sure user-editable seed copies exist (bundled defaults on first run).
-    seed_manager.ensure_user_seeds()
+    # Reconcile bundled seeds with the user's mutable copies: append any
+    # companies added to the bundled defaults that the user copy is missing
+    # (existing / user-added rows are never modified or removed).
+    added = seed_manager.merge_bundled_seeds(log_fn=progress)
 
     # Make sure the schema (incl. scan_runs/scan_log + evidence columns) exists.
     try:
@@ -409,6 +411,10 @@ def run_scan(method: str = "quick",
 
     n_ats = _count_seed_rows(seed_manager.user_ats_path())
     n_career = _count_seed_rows(seed_manager.user_career_path())
+    seed_note = ""
+    total_added = added.get("ats", 0) + added.get("career", 0)
+    if total_added:
+        seed_note = f" (seed update: +{total_added} new companies)"
     if only_companies:
         wanted = {c.strip().lower() for c in only_companies if c and c.strip()}
         if wanted:
@@ -422,7 +428,7 @@ def run_scan(method: str = "quick",
                 if r.get("name", "").strip().lower() in wanted)
     db.start_scan_run(db_path, run_id, method, n_ats, n_career)
     progress(f"Scan {run_id} started: method={method}, "
-             f"ATS companies={n_ats}, career companies={n_career}")
+             f"ATS companies={n_ats}, career companies={n_career}{seed_note}")
 
     # Live ingestion: scanners write accepted rows to their CSVs company by
     # company, so tail them into the DB while the scan runs. This makes the

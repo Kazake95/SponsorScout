@@ -164,3 +164,14 @@ class ApplicationsTab(QWidget):
             self._hide_form()
             self.load_applications()
             self.data_changed.emit()
+
+    # ── i18n ──────────────────────────────────────────────────────────────
+    def retranslate(self):
+        self.remove_btn.setText(_("Remove Selected"))
+        self.refresh_btn.setText(_("↻ Refresh"))
+        self.form.setTitle(_(" Edit selected "))
+        self.save_btn.setText(_("Save"))
+        self.cancel_btn.setText(_("Cancel"))
+        self.table.setHorizontalHeaderLabels(
+            [_("Company"), _("Title"), _("Status"), _("Saved on"),
+             _("URL")])

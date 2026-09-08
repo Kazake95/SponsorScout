@@ -24,11 +24,11 @@ Celonis,official_careers,https://careers.celonis.com/join-us/open-positions,Ente
 Choco,official_careers,https://choco.com/us/careers/open-roles,Food Tech,80,85,60
 ClearVue,official_careers,https://clearvue.business/careers/,BI Software,70,80,55
 Conad,official_careers,https://chisiamo.conad.it/lavora-con-noi/posizioni-aperte,Retail/Supermarket,20,60,65
-Coop Italia,official_careers,https://coopcareers.org/join-our-team,Retail/Supermarket,20,60,70
+Coop Italia,official_careers,https://jobs.coopjobs.ch/?lang=it,Retail/Supermarket,20,60,70
 Databricks,official_careers,https://www.databricks.com/company/careers/open-positions,Data/AI,85,95,75
 Decathlon Italia Retail,official_careers,https://lavoraconnoi.decathlon-careers.it/it/annonces,Retail/Sports,25,70,65
 Deliveroo,official_careers,https://careers.deliveroo.co.uk/join-the-team/,Food Tech,80,90,55
-Detectify,official_careers,https://careers.detectify.com/#jobs,Cybersecurity,75,90,70
+Deliveroo,official_careers,https://careers.detectify.com/#jobs,Cybersecurity,75,90,70
 DevsData,official_careers,https://devsdata.com/careers/,Recruitment,70,80,35
 Doctolib,official_careers,https://careers.doctolib.com/jobs/,HealthTech,80,85,55
 Doist,official_careers,https://doist.com/careers#open-roles,Productivity,70,95,100
@@ -90,7 +90,7 @@ Optiver,official_careers,https://www.optiver.com/join-us/jobs/,Fintech/Trading,8
 Organon,official_careers,https://jobs.organon.com/us/en/search-results,Pharma,75,80,50
 Pam Panorama,official_careers,https://lavoraconnoi.gruppopam.it/negozi/regioni/lazio,Retail/Supermarket,20,60,60
 Pam Panorama,official_careers,https://lavoraconnoi.gruppopam.it/sede,Retail/Supermarket,20,60,60
-Personio,official_careers,https://deskbird.jobs.personio.com/?language=en,HR Tech,80,90,65
+Personio,official_careers,https://www.personio.com/about-personio/careers/#see-our-open-roles,HR Tech,80,90,65
 Picnic,official_careers,https://jobs.picnic.app/en/jobs,Food Tech,75,80,50
 Pipedrive,official_careers,https://www.pipedrive.com/en/jobs/open-positions,SaaS,80,90,70
 Pitch,official_careers,https://pitch.com/jobs#positions,SaaS,80,90,85
@@ -112,7 +112,6 @@ Shopify,official_careers,https://www.shopify.com/careers,E-Commerce,85,95,95
 Siemens,official_careers,https://jobs.siemens.com/en_US/externaljobs/SearchJobs,Engineering,80,75,50
 Sigmar Recruitment,official_careers,https://www.sigmarrecruitment.com/job-search/,Recruitment,70,80,35
 Skyscanner,official_careers,https://www.skyscanner.co.in/jobs/current-jobs,Travel,80,85,60
-SNAM,official_careers,https://www.snamanalytics.in/?s=,Energy/Infrastructure,25,65,50
 Spendesk,official_careers,https://spendesk.jobs.personio.com,Fintech,75,85,65
 Spotify,official_careers,https://www.lifeatspotify.com/jobs,Media,90,95,75
 Stellantis,official_careers,https://careers.stellantis.com/job-search-results/,Automotive/Manufacturing,45,70,55
@@ -127,3 +126,14 @@ UniCredit,official_careers,https://careers.unicredit.eu/,Banking/Finance,30,70,6
 Veriff,official_careers,https://www.veriff.com/careers/open-positions,SaaS,75,90,65
 Voi Technology,official_careers,https://careers.voi.com/jobs,Mobility,75,85,50
 Wise,official_careers,https://wise.jobs/jobs,Fintech,85,95,85
+Bulgari Hotels & Resorts,official_careers,https://bulgari.recruitmentplatform.com/FO/PCAFK026203F3VBQB798N7V11/index.html?languageSelect=EN,Hospitality,20,80,10
+Rocco Forte Hotels,official_careers,https://careers.roccofortehotels.com/jobs,Hospitality,15,75,10
+Belmond,official_careers,https://careers.belmond.com/jobs?country=United+Kingdom,Hospitality,20,85,10
+NH Hotel Group Italy,official_careers,https://euamcareers.minorhotels.com/search/?createNewAlert=false&q=&optionsFacetsDD_country=&optionsFacetsDD_dept=&optionsFacetsDD_customfield3=&optionsFacetsDD_location=&optionsFacetsDD_customfield2=&optionsFacetsDD_customfield4=&optionsFacetsDD_city=&optionsFacetsDD_customfield1=,Hospitality,10,70,10
+Starhotels,official_careers,https://www.starhotels.com/en/careers.html,Hospitality,10,65,5
+Gruppo UNA,official_careers,https://hdix.fa.em3.oraclecloud.com/hcmUI/CandidateExperience/it/sites/CX_1/jobs?mode=location,Hospitality,5,50,5
+Eataly Italia,official_careers,https://careers.eataly.com/search-jobs/?q=&dept=&loc=,Retail/Hospitality,10,60,10
+OVS,official_careers,https://careers-ovsgroup.ovs.it/jobs.php?source=direct,Retail,5,40,15
+Oniverse,official_careers,https://careers.oniverse.it/en-US/home,Retail,10,50,20
+Trivago,official_careers,https://careers.trivago.com/jobs/?job_families=0&experience_levels=0,Travel/Data,80,95,60
+TomTom,official_careers,https://www.tomtom.com/careers/joboverview/,Tech/Data,80,95,65

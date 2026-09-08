@@ -66,6 +66,7 @@ QLabel#StatusLabel {{ color: {TEXT_MUTED}; font-size: 11px; }}
 QLabel#SectionHeader, QLabel#SectionTitle {{ color: {HEADER_BG};
         font-size: 13px; font-weight: bold; }}
 QLabel#MutedLabel {{ color: {TEXT_MUTED}; font-size: 11px; }}
+QLabel#SectionHelp {{ color: {TEXT_MUTED}; font-size: 11px; }}
 
 QFrame#Card {{ background-color: {CARD_BG}; border: 1px solid {BORDER};
                border-radius: 6px; }}

@@ -92,9 +92,12 @@ def test_export_scan_run_csv(db_path):
     db.finish_scan_run(db_path, "R1", targets_ok=1, targets_error=1,
                        targets_empty=0, jobs_found=2, status="completed")
     out = db.export_scan_run_csv(db_path, "R1")
-    assert "Run ID,R1" in out
-    assert "Per-company scan log" in out
-    assert "Event timeline" in out
+    # Structured summary is now Key/Value columns.
+    assert "Run ID" in out and "R1" in out
+    # Per-company section header row (fixed 14 columns).
+    assert "Seed Name" in out and "Diagnostics" in out and "Seed URL" in out
+    assert "Event timeline" not in out  # replaced by column header row
+    assert "Timestamp" in out and "Message" in out
     assert "Acme" in out
     assert "seed timeout" in out
     # Diagnostics must survive into the exported rows (not truncated away).

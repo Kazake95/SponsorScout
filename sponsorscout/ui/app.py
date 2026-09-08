@@ -9,13 +9,14 @@ data refreshed, scan requested) between them.
 from __future__ import annotations
 
 import logging
+import sys
 
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -30,6 +31,17 @@ from sponsorscout.ui.tabs import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Windows: give the process an explicit AppUserModelID so the taskbar / Start
+# menu groups it under OUR icon rather than the generic Python/PyInstaller one.
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "com.sponsorscout.SponsorScout")
+    except Exception:  # noqa: BLE001 - cosmetic, best-effort
+        pass
 
 
 class SponsorScoutApp(QMainWindow):
@@ -78,11 +90,11 @@ class SponsorScoutApp(QMainWindow):
         title.setObjectName("AppTitle")
         lay.addWidget(title)
 
-        subtitle = QLabel(
-            _("Verified sponsorship-focused jobs from official career pages "
-              "and ATS boards"))
-        subtitle.setObjectName("AppSubtitle")
-        lay.addWidget(subtitle)
+        self.subtitle = QLabel()
+        self.subtitle.setObjectName("AppSubtitle")
+        self.subtitle.setTextFormat(Qt.RichText)
+        self.subtitle.setText(self._subtitle_text())
+        lay.addWidget(self.subtitle)
 
         lay.addStretch(1)
 
@@ -113,7 +125,20 @@ class SponsorScoutApp(QMainWindow):
                     self.logo_label.setPixmap(
                         pix.scaled(28, 28, Qt.KeepAspectRatio,
                                    Qt.SmoothTransformation))
-                    self.setWindowIcon(QIcon(str(png)))
+                    # Build a multi-size icon so the OS can pick the best
+                    # resolution for the taskbar / Start menu / panel.
+                    icon = QIcon()
+                    for size in (16, 24, 32, 48, 64, 128, 256):
+                        p = icon_dir / f"sponsorscout_{size}.png"
+                        if p.exists():
+                            icon.addFile(str(p))
+                    icon.addPixmap(pix)  # fallback
+                    self.setWindowIcon(icon)
+                    # Set on the application too — required on Windows for the
+                    # taskbar icon and on Linux for the panel / app list.
+                    app = QApplication.instance()
+                    if app is not None:
+                        app.setWindowIcon(icon)
         except Exception as exc:  # noqa: BLE001 - icon is cosmetic
             logger.debug("Failed to load icon: %s", exc)
 
@@ -182,6 +207,17 @@ class SponsorScoutApp(QMainWindow):
         self.status_label.setText(msg)
 
     # ── Language switching ──────────────────────────────────────────────────
+    def _subtitle_text(self):
+        """Return the header subtitle, with "Per Hamliee ❤ !!" bold + larger
+        font highlighted in the Italian version (single contiguous line)."""
+        subtitle_text = _("Verified sponsorship-focused jobs from official career pages "
+                          "and ATS boards")
+        if get_locale() == "it":
+            subtitle_text = subtitle_text.replace(
+                "Per Hamliee \u2764 !!",
+                '<b><span style="font-size: 14pt;">Per Hamliee \u2764 !!</span></b>')
+        return subtitle_text
+
     def _on_language_change(self):
         code = self.lang_combo.currentData()
         if code and code != get_locale():
@@ -191,12 +227,14 @@ class SponsorScoutApp(QMainWindow):
 
     def retranslate(self):
         self.setWindowTitle(_("SponsorScout"))
+        self.subtitle.setText(self._subtitle_text())
         self.tabs.setTabText(0, _("Dashboard"))
         self.tabs.setTabText(1, _("Search"))
         self.tabs.setTabText(2, _("Applications"))
         self.tabs.setTabText(3, _("Tools"))
         self.tabs.setTabText(4, _("Data Management"))
-        for tab in (self.dashboard_tab, self.search_tab):
+        for tab in (self.dashboard_tab, self.search_tab,
+                    self.applications_tab, self.tools_tab, self.data_tab):
             retranslate = getattr(tab, "retranslate", None)
             if callable(retranslate):
                 retranslate()

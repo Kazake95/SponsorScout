@@ -1,203 +1,188 @@
+<img src="sponsorscout/data/sponsorscout.png" alt="SponsorScout" width="420">
+
 # SponsorScout
 
-**Verified visa-sponsorship job discovery for international candidates.**
+**Find verified jobs from official company career pages and ATS boards — right on your desktop.**
 
-SponsorScout scans official company career pages and 17 ATS platforms, detects sponsorship and relocation signals, and helps you focus on EU-friendly roles — all from a local desktop app. No accounts. No cloud. No telemetry.
-
----
-
-## What It Does
-
-- Scans 17 ATS boards (Greenhouse, Lever, Ashby, Workable, Workday, Personio, BambooHR, SmartRecruiters, Teamtailor, Jobvite, iCIMS, Homerun, Freshteam, Breezy, Welcome to the Jungle, Manatal, Recruitee)
-- Falls back to company career pages when no public ATS API exists
-- Scores jobs for visa sponsorship likelihood, EU Blue Card eligibility, and relocation support
-- Tracks applications through the pipeline
-- Provides AI-assisted job rating, CV tailoring, and cover letter generation
+SponsorScout is a free, fully local desktop application. It scans official
+company career pages and 17 ATS job boards (Greenhouse, Lever, Ashby, Workday
+and more), scores every job for EU Blue Card eligibility and relocation
+support, and helps you track your applications — all without any accounts,
+cloud services or telemetry.
 
 ---
 
-## Quick Start
+## 📥 Download
+
+Ready-to-use installers are published on the GitHub Releases page:
+
+👉 **[Download the latest release](https://github.com/Kazake95/SponsorScout/releases)**
+
+| Platform | File |
+|----------|------|
+| Windows 10 / 11 | `sponsorscout-<version>-setup.exe` |
+| Linux (Debian / Ubuntu) | `sponsorscout_<version>_amd64.deb` |
+
+> The links above point to the Releases page — paste your published asset
+> URLs here when the release is live.
+
+---
+
+## ✨ What SponsorScout Does
+
+- **Scans official sources only** — 17 ATS platforms plus each company's own
+  career page when no public ATS API exists.
+- **Scores every job** — EU Blue Card eligibility, relocation support and
+  remote-work type are detected from the job description.
+- **Keeps everything local** — all data is stored in a SQLite database on your
+  own computer. Nothing is uploaded anywhere.
+- **Tracks your applications** — a simple pipeline: Saved → Applied →
+  Interview → Offer → Rejected.
+- **AI assistance (optional)** — job rating, CV tailoring and cover-letter
+  generation, either through your normal web AI chat (ChatGPT, Gemini,
+  Claude…) or a direct API key.
+- **Two languages** — English and Italian, switchable at any time from the
+  header dropdown.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# 1. Install dependencies
+# 1. Install the dependencies
 pip install -r requirements.txt
 
-# 2. Launch
-python3 -m sponsorscout.main
+# 2. Launch the app
+python -m sponsorscout.main
 ```
 
-On first launch, click **Yes** in the welcome dialog to run an initial scan (1–3 minutes).
+On the very first launch a welcome dialog asks whether to run the initial
+scan. Click **Yes** — it takes roughly 1–3 minutes and fills the database
+with jobs from every seeded company.
 
 ---
 
-## Features
+## 🗂 The Five Tabs
 
-| Feature | Description |
-|---------|-------------|
-| **Multi-ATS scanning** | 17 connectors + career-page fallback crawler |
-| **Sponsorship scoring** | Keyword-based signals: visa, sponsorship, relocation, EU Blue Card |
-| **Search objectives** | Presets: Balanced, Strict Quality, Visa Sponsor, Local EU, Remote EMEA, Blue Card |
-| **Application tracker** | Status pipeline: Saved → Applied → Interview → Offer → Rejected |
-| **AI tools** | Job rating, CV tailoring, cover letter generation via web chat or direct API |
-| **Internationalisation** | English and Italian; switch from the header dropdown |
-| **Fully local** | SQLite database in your user data directory |
+### 1. Dashboard
+A live overview of your database: total companies, verified jobs, sponsored
+jobs, remote jobs and EU Blue Card jobs — plus a "Top companies by
+sponsorship" table and a "Jobs by country" table. The **Rescan Companies**
+button starts a fresh scan; **Refresh** reloads the numbers.
 
----
+### 2. Search
+The main job browser. Filter by title, company, country, location,
+sponsorship, Blue Card, relocation and remote type, then sort by best match
+or recency. Selecting a row opens the AI rating panel and the right-click
+menu (open in browser, save to applications, copy the rating prompt).
 
-## Architecture
+### 3. Applications
+Your personal application tracker. Select any saved job to set its status
+(Saved / Applied / Interview / Offer / Rejected) and add notes.
 
-```
-sponsorscout/
-├── main.py                 # Entry point — localisation → DB init → UI
-├── paths.py                # Runtime data directories
-├── i18n.py                 # Translation strings + locale persistence
-├── connectors/             # One file per ATS — fetch_jobs() → job dicts
-│   └── base.py             # Abstract base + common helpers
-├── core/
-│   ├── scanner.py          # Scan orchestrator (sequential + parallel workers)
-│   ├── discovery_engine.py # Auto-find career pages via search + ATS fingerprinting
-│   ├── portal_search.py    # Career page probing and job-card extraction
-│   ├── sponsorship.py      # Keyword scoring, Blue Card, relocation detection
-│   ├── scoring.py          # Match score vs. user profile
-│   ├── dedup.py            # Fingerprint-based job and company deduplication
-│   ├── persistence.py      # upsert_job, save_company, mark_job_expired
-│   ├── verification_service.py  # HTTP liveness checker for stale jobs
-│   └── ...
-├── db/
-│   ├── database.py         # All SQL: search, stats, discovery queue, migrations
-│   ├── schema.sql          # Base schema (jobs, companies, applications)
-│   └── migrate_countries.py # Country/location normalisation migration
-├── services/
-│   ├── scan_coordinator.py # Foreground scan worker thread
-│   ├── ai_rating.py        # Prompt builders + response parsers
-│   ├── ai_webview.py       # Launches ChatGPT/Gemini/Claude/Mistral/Perplexity
-│   ├── ai_config.py        # AI provider presets + config persistence
-│   ├── ai_gateway.py       # Direct API call + connection test
-│   ├── browser_fetcher.py  # HTTP fetcher + HTML parser
-│   ├── country_config.py   # Ordered country list for scoring tiers
-│   ├── objectives.py       # Search objective presets
-│   ├── profile.py          # Loads default_profile.json
-│   ├── registry_loader.py  # Reads company_registry_seed.csv
-│   └── source_policy.py    # Classifies job source (verified vs discovery)
-└── ui/
-    └── app.py              # Full tkinter GUI — 7 tabs
-```
+### 4. Tools
+The control centre:
+- **Scanner** — start a scan across all seeded companies (Quick = fast,
+  API-only; Full = browser crawl). Live output appears in the log window.
+- **Scan History** — every past scan run; select one to view or download a
+  detailed per-company log including errors.
+- **Data Quality** — remove duplicates, clear expired jobs, or wipe scanned
+  data.
+- **Freshness Check** — re-verifies saved jobs against their live pages and
+  marks dead listings as expired.
+- **AI Settings** — provider, API key and model configuration.
 
-### Tab order
-
-1. **Dashboard** — stats, top companies, country breakdown
-2. **Search** — filters, sort, objectives, AI rating panel
-3. **Applications** — track pipeline status
-4. **AI Tailor** — CV and cover letter rewriting
-5. **AI Assistant** — browser-based AI chat workflow
-6. **AI Settings** — provider, API key, model configuration
-7. **Tools** — scanner, dedup, stale-data cleanup, AI prompt editor
+### 5. Data Management
+Edit the company lists that SponsorScout scans. Two editors are provided —
+**ATS portals** and **Career portals**. You can add, edit or remove
+companies; changes are saved to your personal seed files and take effect on
+the next scan. A "Reset to bundled defaults" button restores the original
+lists.
 
 ---
 
-## App Workflow
+## 🌐 Language Switching
 
-```
-1. User launches app → main.py loads locale → initializes DB schema
-2. If first run → welcome dialog offers to scan curated companies
-3. Scan flow:
-   a. Load company registry from CSV (seed or expanded)
-   b. For each company:
-      - Try known ATS connector (API or HTML fallback)
-      - If no ATS, probe career-page URLs (/careers, /jobs, etc.)
-      - Extract jobs with role, location, description
-   c. Score each job: sponsorship signals, Blue Card, relocation, remote type
-   d. Deduplicate across connectors
-   e. Upsert into SQLite (new jobs / refresh existing)
-4. Search / Dashboard reads from SQLite with optional objective filters
-5. Application tracker manages status + notes per job URL
-6. AI tools generate prompts or call configured API directly
-```
-
-### Data directory
-
-| Platform | Location | Override env vars |
-|----------|----------|-------------------|
-| Linux / macOS | `~/.sponsorscout` | `SPONSORSCOUT_DATA_DIR` |
-| Windows | `%APPDATA%\SponsorScout` | `SPONSORSCOUT_DB_PATH` |
-
-Contents:
-- `sponsorscout.db` — all jobs, companies, scan history
-- `default_profile.json` — skills, titles, countries for match scoring
-- `ai_prompts.json` — custom prompt templates
-- `locale.json` — language preference
+Use the dropdown in the top-right corner of the header to switch between
+**English** and **Italiano**. Your choice is remembered and restored on the
+next launch.
 
 ---
 
-## Build
+## ⚙️ How Scanning Works
 
-### Linux (.deb)
+1. SponsorScout reads its **seed files** — curated lists of companies with
+   their career URLs and ATS type.
+2. Companies with a known ATS are scanned through the official **job-board
+   API** (fast).
+3. Companies without a public ATS are crawled through their **career page**
+   with a headless browser.
+4. Every job is classified (Blue Card / relocation / remote) and
+   deduplicated.
+5. Results are stored in the local SQLite database and appear immediately in
+   the Dashboard and Search tabs.
 
-```bash
-./build_deb.sh
-```
+Seed files live in your user data folder and can be edited in the Data
+Management tab.
 
-Outputs `dist/sponsorscout_<version>_amd64.deb`.
+---
 
-### Windows (Inno Setup)
+## 💾 Where Your Data Lives
+
+| Platform | Location |
+|----------|----------|
+| Windows | `%APPDATA%\SponsorScout` |
+| Linux / macOS | `~/.sponsorscout` |
+
+Contents: `sponsorscout.db` (all jobs, companies and scan history),
+`seeds/` (your editable company lists), `locale.json` (language preference),
+plus AI prompt templates.
+
+---
+
+## 🏗 Building From Source
+
+**Windows (Inno Setup installer):**
 
 ```powershell
 .\build_exe.ps1
 ```
 
-Outputs `dist\sponsorscout-<version>-setup.exe`. Requires Inno Setup 6.
+Output: `dist\sponsorscout-<version>-setup.exe` (requires Inno Setup 6).
 
----
+**Linux (.deb package):**
 
-## Requirements
-
-- Python 3.10+
-- tkinter (bundled with python.org Windows installer; on Ubuntu: `sudo apt install python3-tk`)
-- Playwright Chromium (auto-downloaded on Linux install; on Windows downloaded on first run)
-
-See `requirements.txt` for full dependency list.
-
----
-
-## Adding Companies
-
-Edit `sponsorscout/data/company_registry_seed.csv`:
-
-```
-name,country,ats_type,careers_url,ats_board_token
-Monzo,United Kingdom,greenhouse,https://boards.greenhouse.io/monzo,monzo
+```bash
+./build_deb.sh
 ```
 
-Use `official_careers` as `ats_type` when no known ATS API exists. The fallback crawler probes common paths, detects embedded ATS links, and extracts job cards.
+Output: `dist/sponsorscout_<version>_amd64.deb`.
 
 ---
 
-## Configuration
+## 📋 Requirements
 
-### Search objectives
+- Python 3.10 or newer
+- PySide6, requests, beautifulsoup4, lxml, Pillow (installed via
+  `requirements.txt`)
+- Playwright Chromium (downloaded automatically for the career-page crawler)
 
-Preset filter bundles (defined in `services/objectives.py`):
+---
 
-| Preset | Description |
-|--------|-------------|
-| Balanced | Default mix |
-| Strict quality | Tighter skill/title matching |
-| Visa sponsor | Prioritises sponsorship signals |
-| Local EU | EU-based roles only |
-| Remote EMEA | Remote roles across EMEA |
-| Blue Card focus | EU Blue Card-eligible roles |
+## 🤖 AI Providers (optional)
 
-### AI providers
-
-Configure in **Tools → AI Settings** or edit the config file:
+Configure in **Tools → AI Settings**:
 
 - Google AI Studio (free tier)
 - NVIDIA NIM (free credits)
 - OpenAI
 - Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio)
 
+Or skip the API entirely and use the built-in browser AI chat workflow with
+your normal ChatGPT / Gemini / Claude account.
+
 ---
 
-## License
+## 📄 License
 
-MIT
+MIT — see [LICENSE](LICENSE).

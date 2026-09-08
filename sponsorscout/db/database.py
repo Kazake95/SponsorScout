@@ -684,9 +684,18 @@ def get_scan_events(db_path, run_id: str):
 
 
 def export_scan_run_csv(db_path, run_id: str) -> str:
-    """Render one scan run as a CSV for downloading (summary + per-company
-    log + event timeline).  Pure function on the DB so it is testable without
-    a GUI."""
+    """Render one scan run as a structured CSV for downloading.
+
+    Three sections, each with its own header row, so every column is
+    machine-readable in Excel / LibreOffice (the old single-cell "k,v" rows
+    split unreliably across columns):
+
+      1. Summary      — Key / Value columns (run metadata)
+      2. Per-company  — fixed 14 columns incl. Error, Diagnostics, Duration
+                         Sec and Seed URL (these carry the critical failure
+                         descriptions that were missing before)
+      3. Event timeline — Timestamp / Level / Phase / Company / Message
+    """
     import csv
     import io
 
@@ -697,34 +706,50 @@ def export_scan_run_csv(db_path, run_id: str) -> str:
     if run is None:
         raise ValueError(f"Scan run not found: {run_id}")
 
-    writer.writerow([f"Run ID,{run['run_id']}"])
-    writer.writerow([f"Method,{run['method']}"])
-    writer.writerow([f"Started,{run['started_at'] or ''}"])
-    writer.writerow([f"Finished,{run['finished_at'] or ''}"])
-    writer.writerow([f"Status,{run['status'] or ''}"])
-    writer.writerow([f"Jobs Found,{run['jobs_found'] or 0}"])
-    writer.writerow([f"Duplicates,{run['jobs_duplicates'] or 0}"])
-    writer.writerow([f"Quarantined,{run['jobs_quarantined'] or 0}"])
-    writer.writerow([f"Targets OK,{run['targets_ok'] or 0}"])
-    writer.writerow([f"Targets Empty,{run['targets_empty'] or 0}"])
-    writer.writerow([f"Targets Error,{run['targets_error'] or 0}"])
-    writer.writerow([f"Run Error,{run['error'] or ''}"])
-    buf.write("\n")
+    # ── 1. Summary (Key / Value) ─────────────────────────────────────────
+    writer.writerow(["Key", "Value"])
+    summary_fields = [
+        ("Run ID", run["run_id"]),
+        ("Method", run["method"] or ""),
+        ("Started", run["started_at"] or ""),
+        ("Finished", run["finished_at"] or ""),
+        ("Status", run["status"] or ""),
+        ("Jobs Found", run["jobs_found"] or 0),
+        ("Duplicates", run["jobs_duplicates"] or 0),
+        ("Quarantined", run["jobs_quarantined"] or 0),
+        ("Targets OK", run["targets_ok"] or 0),
+        ("Targets Empty", run["targets_empty"] or 0),
+        ("Targets Error", run["targets_error"] or 0),
+        ("Run Error", run["error"] or ""),
+    ]
+    for key, val in summary_fields:
+        writer.writerow([key, val])
+    writer.writerow([])  # blank separator row
 
-    writer.writerow([f"Per-company scan log"])
-    writer.writerow(["Seed", "Company", "Source", "Target Country", "Status",
-                     "Provider", "Jobs", "Quar.", "Dups", "Scope Rej.",
-                     "Error", "Diagnostics", "Duration Sec", "Seed URL"])
+    # ── 2. Per-company scan log (fixed columns) ─────────────────────────
+    PER_COMPANY_COLS = [
+        "Seed Name", "Company", "Source Type", "Target Country", "Status",
+        "Provider", "Jobs Found", "Quarantined", "Duplicates",
+        "Rejected Scope", "Error", "Diagnostics", "Duration Sec",
+        "Seed URL",
+    ]
+    col_index = [
+        "seed_name", "company", "source_type", "target_country", "status",
+        "provider", "jobs_found", "quarantined", "duplicates",
+        "rejected_scope", "error", "diagnostics", "duration_sec", "seed_url",
+    ]
+    writer.writerow(PER_COMPANY_COLS)
     for row in get_scan_log(db_path, run_id):
-        writer.writerow([row[c] for c in row.keys()])
-    buf.write("\n")
+        # Rows are sqlite3.Row objects — index by column name, default "".
+        writer.writerow([row[c] if row[c] is not None else "" for c in col_index])
+    writer.writerow([])  # blank separator row
 
+    # ── 3. Event timeline ───────────────────────────────────────────────
     events = []
     try:
         events = get_scan_events(db_path, run_id)
     except Exception:  # pragma: no cover - old DBs may lack scan_events
         pass
-    writer.writerow(["Event timeline"])
     writer.writerow(["Timestamp", "Level", "Phase", "Company", "Message"])
     for ev in events:
         writer.writerow([ev["ts"], ev["level"], ev["phase"],

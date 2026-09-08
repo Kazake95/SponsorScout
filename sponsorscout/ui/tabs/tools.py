@@ -95,9 +95,25 @@ class ToolsTab(QWidget):
         root.addStretch(1)
 
 # ── Group builders ───────────────────────────────────────────────────────
+    @staticmethod
+    def _add_section_help(box: QGroupBox, text: str) -> None:
+        """Add a small grey description label under a group-box title, and
+        also set it as the group box tooltip (hover for the same text)."""
+        desc = QLabel(text)
+        desc.setObjectName("SectionHelp")
+        desc.setWordWrap(True)
+        # Insert the description as the first widget of the box layout,
+        # which places it directly beneath the title row.
+        lay = box.layout()
+        if lay is not None:
+            lay.insertWidget(0, desc)
+        box.setToolTip(text)
+
     def _build_scanner_group(self):
         scanner = QGroupBox(_("Scanner"))
+        self._scanner_box = scanner
         lay = QVBoxLayout(scanner)
+        self._add_section_help(scanner, _("Scanner description"))
         row = QHBoxLayout()
         row.setSpacing(8)
         self.method_label = QLabel(_("Method"))
@@ -125,7 +141,9 @@ class ToolsTab(QWidget):
 
     def _build_history_group(self):
         box = QGroupBox(_("Scan History"))
+        self._history_box = box
         lay = QVBoxLayout(box)
+        self._add_section_help(box, _("Scan History description"))
         self.runs_table = QTableWidget(0, len(HEADERS_RUNS))
         self.runs_table.setHorizontalHeaderLabels(HEADERS_RUNS)
         self.runs_table.verticalHeader().setVisible(False)
@@ -149,7 +167,9 @@ class ToolsTab(QWidget):
 
     def _build_quality_group(self):
         box = QGroupBox(_("Data Quality"))
+        self._quality_box = box
         lay = QHBoxLayout(box)
+        self._add_section_help(box, _("Data Quality description"))
         self.dedup_btn = QPushButton(_("Run Dedup"))
         self.dedup_btn.clicked.connect(self._run_dedup)
         self.stale_btn = QPushButton(_("Clear Stale Data"))
@@ -164,7 +184,9 @@ class ToolsTab(QWidget):
 
     def _build_freshness_group(self):
         box = QGroupBox(_("Freshness Check"))
+        self._freshness_box = box
         lay = QHBoxLayout(box)
+        self._add_section_help(box, _("Freshness Check description"))
         lay.setSpacing(8)
         lay.addWidget(QLabel(_("Check up to")))
         self.verify_n = QSpinBox()
@@ -428,3 +450,42 @@ class ToolsTab(QWidget):
         self.fresh_btn.setEnabled(True)
         self.status_message.emit(_("Freshness check done."))
         self.data_changed.emit()
+
+    # ── i18n ──────────────────────────────────────────────────────────────
+    def retranslate(self):
+        self._scanner_box.setTitle(_("Scanner"))
+        self._history_box.setTitle(_("Scan History"))
+        self._quality_box.setTitle(_("Data Quality"))
+        self._freshness_box.setTitle(_("Freshness Check"))
+        for box in (self._scanner_box, self._history_box,
+                    self._quality_box, self._freshness_box):
+            help_lbl = box.findChild(QLabel, "SectionHelp")
+            if help_lbl is not None:
+                key = {
+                    id(self._scanner_box): "Scanner description",
+                    id(self._history_box): "Scan History description",
+                    id(self._quality_box): "Data Quality description",
+                    id(self._freshness_box): "Freshness Check description",
+                }.get(id(box))
+                if key:
+                    txt = _(key)
+                    help_lbl.setText(txt)
+                    box.setToolTip(txt)
+        self.method_label.setText(_("Method"))
+        idx = self.method_combo.currentIndex()
+        self.method_combo.clear()
+        self.method_combo.addItem(_("Quick (API-first)"), "quick")
+        self.method_combo.addItem(_("Full (browser crawl)"), "full")
+        self.method_combo.setCurrentIndex(max(0, idx))
+        self.scan_btn.setText(_("Scan Now"))
+        self.stop_btn.setText(_("Stop"))
+        self.scan_log.setPlaceholderText(_("Scan output appears here…"))
+        self.view_log_btn.setText(_("View Per-Company Log"))
+        self.download_log_btn.setText(_("Download Scan Log"))
+        self.dedup_btn.setText(_("Run Dedup"))
+        self.stale_btn.setText(_("Clear Stale Data"))
+        self.clear_scan_btn.setText(_("Clear Scan Data"))
+        self.fresh_btn.setText(_("Run"))
+        self.runs_table.setHorizontalHeaderLabels([
+            _("Run ID"), _("Method"), _("Started"), _("Status"),
+            _("Jobs"), _("Dups"), _("Quarantined"), _("Errors")])
