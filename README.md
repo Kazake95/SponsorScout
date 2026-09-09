@@ -1,4 +1,4 @@
-<img src="sponsorscout/data/sponsor scout.png" alt="Sponsor Scout" width="420" style="display: block; margin: 0 auto;">
+<img src="sponsorscout/data/sponsor scout.png" alt="Sponsor Scout" width="420">
 
 # SponsorScout
 
