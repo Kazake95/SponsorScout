@@ -19,11 +19,20 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.31.0,<3.0.0",
-    "beautifulsoup4>=4.12.0,<5.0.0",
-    "lxml>=4.9.0,<6.0.0",
-    "Pillow>=10.0.0,<11.0.0",
     "playwright>=1.40.0,<2.0.0",
     "PySide6>=6.5.0",
+]
+
+# Dev/test-only dependencies (pytest, pyinstaller) are intentionally NOT listed
+# here so an editable install for the app stays lean. Install them separately:
+#   pip install -r requirements-dev.txt
+# Removed from this package's runtime deps (verified unused by the shipped app):
+#   beautifulsoup4, lxml, Pillow, pandas — legacy `extra_for_dev_purpose` only.
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pyinstaller>=6.0.0",
 ]
 
 # Tests removed; no test extras.

@@ -56,7 +56,6 @@ if ($RepairNeeded) {
     if ($LASTEXITCODE -ne 0) { & $Python @PythonArgs -m ensurepip 2>$null }
 }
 & $Python @PythonArgs -m pip install -r requirements.txt | Out-Null
-& $Python @PythonArgs -m playwright install chromium | Out-Null
 
 Write-Host "[2/4] Building SponsorScout.exe with PyInstaller..." -ForegroundColor Cyan
 if (Test-Path $DistDir) {
@@ -74,12 +73,60 @@ if (Test-Path $DistDir) {
     --collect-submodules sponsorscout `
     --collect-submodules playwright `
     --collect-submodules PySide6 `
+    --exclude-module pandas `
+    --exclude-module PIL `
+    --exclude-module bs4 `
+    --exclude-module lxml `
+    --exclude-module tkinter `
+    --exclude-module pytest `
     sponsorscout/main.py
 
 if (-not (Test-Path $ExePath)) {
     throw "PyInstaller did not produce $ExePath"
 }
 Write-Host "Built $ExePath (version $Version)" -ForegroundColor Green
+
+# Install Playwright's Chromium DIRECTLY into the bundle's `_playwright`
+# directory so it ships inside the installer and sponsorscout/paths.py can
+# point PLAYWRIGHT_BROWSERS_PATH at it on the user's machine (first launch,
+# offline-capable). Previously this downloaded to the build machine's cache
+# only, so the installed app had no browser at all and every `provider=auto`
+# career target failed with "Executable doesn't exist".
+$BundledPlaywright = Join-Path $BuildDir '_playwright'
+Write-Host "[3/4] Installing Chromium into bundle ($BundledPlaywright)..." -ForegroundColor Cyan
+$env:PLAYWRIGHT_BROWSERS_PATH = $BundledPlaywright
+try {
+    & $Python @PythonArgs -m playwright install chromium
+    if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed (exit $LASTEXITCODE)" }
+} finally {
+    Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH -ErrorAction SilentlyContinue
+}
+if (-not (Test-Path $BundledPlaywright)) {
+    throw "Playwright browsers were NOT installed into $BundledPlaywright - career scanning would be broken in the packaged app."
+}
+Write-Host "Bundled Chromium verified at $BundledPlaywright" -ForegroundColor Green
+
+# ── Size reduction: caches / metadata only ─────────────────────────────────
+# Same safe set as build_deb.sh. Deletes generated caches and package metadata
+# that are never needed at runtime. NO binaries are stripped (stripping the
+# *.pyd/*.dll C-extensions breaks PySide6/Playwright at runtime).
+$InternalDir = Join-Path $BuildDir '_internal'
+
+Get-ChildItem -Path $InternalDir -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.PSIsContainer -and $_.Name -eq '__pycache__' } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $InternalDir -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { -not $_.PSIsContainer -and $_.Extension -eq '.pyc' } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $InternalDir -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.PSIsContainer -and $_.Name -like '*.dist-info' } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+# Remove Playwright's bundled ffmpeg (video recording only — never used),
+# ~3 MB.
+Get-ChildItem -Path $BundledPlaywright -Directory -Filter 'ffmpeg*' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Write-Host "Bundle cleanup complete (caches, *.pyc, *.dist-info, _playwright/ffmpeg-*)."
 
 # Prepare installer source directory with the entire onedir build output.
 # Playwright's Chromium IS bundled for offline use — it will be installed to
@@ -94,12 +141,26 @@ if (Test-Path $InstallerSrcDir) {
 New-Item -ItemType Directory -Path $InstallerSrcDir -Force | Out-Null
 Copy-Item -Path "$BuildDir\*" -Destination $InstallerSrcDir -Recurse -Force
 
-# Preserve _playwright directory with Chromium binaries for offline operation.
-# The installer.iss sets PLAYWRIGHT_BROWSERS_PATH to use these bundled browsers.
+# Shortcut / Add-Remove icon: installer.iss references {app}\sponsorscout.ico
+# for the Start-menu + desktop shortcut (IconFilename) and the Add/Remove
+# Programs entry (UninstallDisplayIcon = {app}\sponsorscout.ico). Without the
+# .ico at the bundle root that path is missing, so Windows falls back to the
+# generic blank-page icon. Copy it here so all three references resolve.
+$BundleIco = Join-Path $InstallerSrcDir 'sponsorscout.ico'
+$SourceIco = Join-Path $Root 'sponsorscout\data\sponsorscout.ico'
+if (-not (Test-Path $SourceIco)) {
+    throw "App icon not found at $SourceIco - shortcuts would install with no icon."
+}
+Copy-Item -Path $SourceIco -Destination $BundleIco -Force
+Write-Host "Copied $SourceIco -> $BundleIco" -ForegroundColor Green
+
+# Verify _playwright directory with Chromium binaries exists in the bundle
+# (installed by step [3/4] above). The installer.iss sets
+# PLAYWRIGHT_BROWSERS_PATH to {app}\_playwright and sponsorscout/paths.py
+# falls back to exe_dir\_playwright, so this directory is mandatory.
 $PlaywrightInBundle = Join-Path $InstallerSrcDir '_playwright'
 if (-not (Test-Path $PlaywrightInBundle)) {
-    Write-Warning "Playwright browsers not found in bundle at $PlaywrightInBundle"
-    Write-Warning "Career portal scanning may require internet on first run."
+    throw "Playwright browsers missing from bundle at $PlaywrightInBundle - refusing to build an installer that cannot scan SPA career portals."
 }
 
 # Step 4: Build Inno Setup installer if ISCC.exe is available
@@ -159,3 +220,7 @@ if (Test-Path $InstallerSrcDir) {
 Write-Host ""
 Write-Host "Done. Artifacts in $DistDir :"
 Get-ChildItem $DistDir | ForEach-Object { Write-Host ("  " + $_.Name) }
+# Report the raw onedir bundle size so slim-down gains are measurable.
+$bundleMB = (Get-ChildItem -Path $BuildDir -Recurse -Force -ErrorAction SilentlyContinue |
+             Measure-Object -Property Length -Sum).Sum / 1MB
+Write-Host ("Raw onedir bundle size: " + [math]::Round($bundleMB, 1) + " MB")

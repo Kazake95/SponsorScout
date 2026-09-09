@@ -41,7 +41,6 @@ if ! python3 -c "import pip._internal.operations.build" >/dev/null 2>&1; then
   python3 -m ensurepip --upgrade >/dev/null 2>&1 || python3 -m ensurepip >/dev/null 2>&1 || true
 fi
 python3 -m pip install -r requirements.txt >/dev/null
-python3 -m playwright install chromium >/dev/null || true
 
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 mkdir -p "$APP_DIR" "$DEBIAN_DIR" "$DIST_DIR"
@@ -56,6 +55,12 @@ python3 -m PyInstaller \
   --collect-submodules sponsorscout \
   --collect-submodules playwright \
   --collect-submodules PySide6 \
+  --exclude-module pandas \
+  --exclude-module PIL \
+  --exclude-module bs4 \
+  --exclude-module lxml \
+  --exclude-module tkinter \
+  --exclude-module pytest \
   sponsorscout/main.py
 
 cp -a "dist/$APP_NAME/"* "$APP_DIR/"
@@ -83,7 +88,23 @@ find "$APP_DIR" -type d -name "locale" -exec rm -rf {} + 2>/dev/null || true
 find "$APP_DIR" -type d \( -name "tests" -o -name "test" -o -name "testing" \) \
   -not -path "*/sponsorscout/*" -exec rm -rf {} + 2>/dev/null || true
 
-# NOTE: The bundled Playwright Chromium (_playwright) is intentionally KEPT so
+# ── Bundled Playwright Chromium ──────────────────────────────────────────────
+# Install Chromium DIRECTLY into the package's `_playwright` directory so it
+# ships inside the .deb and sponsorscout/paths.py (exe_dir/_playwright) and
+# the /usr/bin/sponsorscout launcher can point PLAYWRIGHT_BROWSERS_PATH at it
+# on the user's machine. Previously this downloaded to the build machine's
+# ~/.cache/ms-playwright only, so the installed app had no browser at all and
+# every `provider=auto` career target failed with "Executable doesn't exist".
+echo "Installing Playwright Chromium into bundle ($APP_DIR/_playwright)…"
+PLAYWRIGHT_BROWSERS_PATH="$APP_DIR/_playwright" python3 -m playwright install chromium
+if [ ! -d "$APP_DIR/_playwright" ]; then
+  echo "ERROR: Playwright browsers were NOT installed into $APP_DIR/_playwright —" >&2
+  echo "the packaged app could not scan SPA career portals. Aborting build." >&2
+  exit 1
+fi
+# Remove Playwright's bundled ffmpeg (video recording only — never used), ~3 MB.
+find "$APP_DIR/_playwright" -maxdepth 1 -type d -name 'ffmpeg*' -exec rm -rf {} + 2>/dev/null || true
+# The bundled Playwright Chromium (_playwright) is intentionally KEPT so
 # JS-rendered career portals work out of the box. Deleting it makes every scan
 # fail and the UI appear hung/frozen.
 echo "Size reduction complete."
@@ -110,11 +131,14 @@ if [ ! -x "$APP_BIN" ]; then
   exit 1
 fi
 
-# Ensure the Playwright browser binary directory exists.
-# Users need to run:  python3 -m playwright install chromium
-# (once, or let the app download it at first launch).
+# Prefer the Chromium bundle shipped inside the package (/opt/sponsorscout/_playwright,
+# installed by build_deb.sh); fall back to the user's Playwright cache.
 if [ -z "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-  export PLAYWRIGHT_BROWSERS_PATH="${HOME}/.cache/ms-playwright"
+  if [ -d "/opt/sponsorscout/_playwright" ]; then
+    export PLAYWRIGHT_BROWSERS_PATH="/opt/sponsorscout/_playwright"
+  else
+    export PLAYWRIGHT_BROWSERS_PATH="${HOME}/.cache/ms-playwright"
+  fi
 fi
 
 exec "$APP_BIN" "$@"
@@ -137,8 +161,19 @@ Keywords=jobs;visa;sponsorship;careers;
 StartupWMClass=SponsorScout
 EOL
 
+# Install scalable-ish hicolor icon theme entries (16px .. 512px) so the
+# desktop entry's Icon=sponsorscout resolves on the panel / app grid.
+if [ ! -f "sponsorscout/data/icons/sponsorscout_512.png" ]; then
+  echo "ERROR: hicolor source icons not found (sponsorscout_512.png missing) -" >&2
+  echo "the app would install with a blank icon. Aborting build." >&2
+  exit 1
+fi
 for size in 16 24 32 48 64 96 128 256 512; do
   src="sponsorscout/data/icons/sponsorscout_${size}.png"
+  if [ ! -f "$src" ]; then
+    echo "WARNING: missing icon source $src - skipping this size." >&2
+    continue
+  fi
   dst="$BUILD_DIR/usr/share/icons/hicolor/${size}x${size}/apps"
   mkdir -p "$dst"
   cp "$src" "$dst/sponsorscout.png"
@@ -168,9 +203,10 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
 fi
 
-# Auto-install Playwright Chromium so SPA career portals work out of the box.
-# This runs once after package install; it's ~150 MB and required for
-# JavaScript-rendered career pages.
+# Last-resort fallback: install Playwright Chromium into the user's cache.
+# Normally NOT needed — build_deb.sh ships the browsers inside
+# /opt/sponsorscout/_playwright, which the launcher and sponsorscout/paths.py
+# prefer automatically. This only helps if the bundled browsers are missing.
 PYTHON=""
 for candidate in python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
@@ -244,6 +280,7 @@ if [ ! -x "$APP_DIR/$APP_NAME" ]; then
 fi
 
 echo "Binary size: $(du -sh "$APP_DIR/$APP_NAME" | cut -f1)"
+echo "Installed package tree size: $(du -sh "$APP_DIR" | cut -f1)"
 
 # dpkg-deb does not require root when the package tree is staged locally.
 dpkg-deb --build "$BUILD_DIR" "$DIST_DIR/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb" >/dev/null

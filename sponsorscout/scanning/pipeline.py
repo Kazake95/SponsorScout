@@ -230,12 +230,18 @@ def _ingest_output_csv(db_path, path: Path, run_id: str, source_subtype: str,
     return ingested, duplicates
 
 
-def _ingest_scan_log(db_path, path: Path, run_id: str, scanner: str) -> int:
-    """Copy one scanner's per-run scan-log CSV into the scan_log table."""
+def _ingest_scan_log(db_path, path: Path, run_id: str, scanner: str) -> tuple[int, dict]:
+    """Copy one scanner's per-run scan-log CSV into the scan_log table.
+
+    Returns ``(row_count, status_counts)`` where ``status_counts`` maps
+    ``ok``/``empty``/``error`` target counts (``partial`` counts as ``ok``
+    since it produced jobs) for the scan_runs summary columns.
+    """
     if not path or not path.exists():
-        return 0
+        return 0, {"ok": 0, "empty": 0, "error": 0}
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
+    status_counts = {"ok": 0, "empty": 0, "error": 0}
     if rows:
         db.record_scan_log_rows(db_path, run_id, scanner, rows)
         # Elevate per-company failures into the event timeline so hidden errors
@@ -243,13 +249,20 @@ def _ingest_scan_log(db_path, path: Path, run_id: str, scanner: str) -> int:
         for row in rows:
             status = str(row.get("Status") or row.get("status") or "").lower()
             err = (row.get("Error") or row.get("error") or "").strip()
+            if status == "empty":
+                status_counts["empty"] += 1
+            elif status == "error" or (err and status not in ("ok", "partial")):
+                status_counts["error"] += 1
+            else:
+                # "ok" and "partial" both produced jobs for the target.
+                status_counts["ok"] += 1
             if status in ("error", "failed", "partial") or err:
                 db.record_scan_event(
                     db_path, run_id, level="error", phase=scanner,
                     company=str(row.get("Company") or row.get("Seed Name") or ""),
                     message=" | ".join(part for part in
                                        (err, str(row.get("Diagnostics") or "")) if part)[:2000])
-    return len(rows)
+    return len(rows), status_counts
 
 
 def _count_seed_rows(path: Path) -> int:
@@ -477,6 +490,23 @@ def run_scan(method: str = "quick",
         # Cancelled during ATS with nothing produced: honour the stop fully.
         cancelled = True
     else:
+        # Pre-flight: one browser-availability check for the whole career
+        # phase. Without it a packaged build missing the bundled `_playwright`
+        # browsers used to emit the raw Playwright "Executable doesn't exist"
+        # banner for every single company. Fail fast with one clear warning.
+        try:
+            from sponsorscout.services.browser_fetcher import (
+                _ensure_playwright_browsers,
+            )
+            if not _ensure_playwright_browsers():
+                progress(
+                    "WARNING: Chromium browser is not available — JS-rendered "
+                    "career portals (provider=auto / custom career pages) will "
+                    "return 0 jobs. Reinstall the full installer package or run "
+                    "'playwright install chromium' on this machine."
+                )
+        except Exception:  # pragma: no cover - pre-flight must not kill scans
+            logger.exception("Browser pre-flight check failed")
         try:
             scanner = career_module.CareerPortalScanner(
                 input_csv=str(seed_manager.user_career_path()),
@@ -504,6 +534,7 @@ def run_scan(method: str = "quick",
     # (rows already ingested live are simply upserted again, idempotently).
     seen_canonical: set = set()
     ingested_total = dup_total = log_rows_total = 0
+    targets_ok = targets_empty = targets_error = 0
     for csv_base, scanner_label in ((ats_csv, "ats"), (career_csv, "career")):
         if csv_base is None:
             continue
@@ -515,7 +546,7 @@ def run_scan(method: str = "quick",
                 db_path, csv_base.with_name(csv_base.stem + "_recruiter.csv"),
                 run_id, source_subtype="recruiter",
                 seen_canonical=seen_canonical)
-            log_rows = _ingest_scan_log(
+            log_rows, status_counts = _ingest_scan_log(
                 db_path, csv_base.with_name(csv_base.stem + "_scan_log.csv"),
                 run_id, scanner_label)
         except Exception as exc:
@@ -526,6 +557,9 @@ def run_scan(method: str = "quick",
         ingested_total += ingested + rec_ing
         dup_total += dups + rec_dups
         log_rows_total += log_rows
+        targets_ok += status_counts["ok"]
+        targets_empty += status_counts["empty"]
+        targets_error += status_counts["error"]
         summary["artifacts"][scanner_label] = {
             "jobs": str(csv_base),
             "recruiter": str(csv_base.with_name(csv_base.stem + "_recruiter.csv")),
@@ -549,6 +583,8 @@ def run_scan(method: str = "quick",
     try:
         db.finish_scan_run(
             db_path, run_id,
+            targets_ok=targets_ok, targets_empty=targets_empty,
+            targets_error=targets_error,
             jobs_found=ingested_total, jobs_duplicates=dup_total,
             status=summary["status"],
             error="; ".join(phase_errors)[:2000],

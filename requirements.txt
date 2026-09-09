@@ -1,13 +1,15 @@
+# Runtime dependencies actually imported by the shipped sponsorscout package.
+# Representational ordered-requests HTTP client with retries/bot handling.
 requests>=2.31.0,<3.0.0
-beautifulsoup4>=4.12.0,<5.0.0
-lxml>=4.9.0,<6.0.0
-Pillow>=10.0.0,<11.0.0
+# JS-rendered career-portal crawling / DOM fallback + per-job detail scan.
 playwright>=1.40.0,<2.0.0
-pandas>=2.0.0
+# PySide6 desktop GUI (QtCore/QtGui/QtWidgets).
 PySide6>=6.5.0
-# After installing dependencies, run: playwright install chromium
+# Build-time only: used by build_exe.ps1 / build_deb.sh to produce the bundle.
 pyinstaller>=6.0.0
-#innosetup.exe & python.exe for windows build
-# pytest for running the test suite:
-#   python -m pytest sponsorscout/tests/
-pytest>=8.0.0
+
+# Dev/test-only deps live in requirements-dev.txt (pytest, etc.).
+# Explicitly-removed runtime deps (verified unused by the shipped package):
+#   pandas, Pillow, beautifulsoup4, lxml, pytest
+# They were only used by legacy code under `extra_for_dev_purpose` (not bundled)
+# or by the test suite; keeping them grew the venv/bundle for no benefit.

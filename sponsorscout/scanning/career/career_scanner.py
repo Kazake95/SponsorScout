@@ -4479,6 +4479,26 @@ class CareerPortalScanner:
                 if not provider_success:
                     if sync_playwright is None:
                         raise RuntimeError("Playwright is required for DOM fallback. Install requirements and run: playwright install chromium")
+                    # Verify the Chromium binary is actually present/ready
+                    # before launching. Without this, a packaged build without
+                    # the bundled `_playwright` browsers used to throw the raw
+                    # Playwright "Executable doesn't exist" banner for every
+                    # single company, wiping out all `provider=auto` targets.
+                    try:
+                        from sponsorscout.services.browser_fetcher import (
+                            _ensure_playwright_browsers,
+                        )
+                        _browser_ready = _ensure_playwright_browsers()
+                    except Exception as _exc:  # pragma: no cover
+                        _notify(f"Browser readiness check failed: {_exc}")
+                        _browser_ready = False
+                    if not _browser_ready:
+                        raise RuntimeError(
+                            "Chromium browser not available for DOM fallback "
+                            "(packaged builds must ship the `_playwright` "
+                            "browser bundle; dev builds need `playwright "
+                            "install chromium`)"
+                        )
                     with sync_playwright() as pw:
                         browser = pw.chromium.launch(
                             headless=True,

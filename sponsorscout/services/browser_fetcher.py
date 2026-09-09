@@ -143,16 +143,31 @@ def _ensure_playwright_browsers() -> bool:
             _ensure_playwright_browsers._ok = False
             return False
 
-    # Binary missing — run playwright install automatically
+    # Binary missing — attempt recovery. In a frozen (packaged) build there is
+    # no usable `python -m playwright` (sys.executable is SponsorScout.exe /
+    # the SponsorScout ELF binary), so auto-install can never succeed there;
+    # instead the browsers must ship inside the bundle's `_playwright`
+    # directory (see build_exe.ps1 / build_deb.sh and sponsorscout/paths.py).
+    if getattr(sys, "frozen", False):
+        logger.error(
+            "Playwright Chromium browser is missing from the installed app "
+            "(no `_playwright` browser bundle next to the executable and no "
+            "downloaded browser cache). SPA / JS-rendered career portals "
+            "cannot be crawled. Fix: reinstall SponsorScout from a full "
+            "installer package (the installer ships `_playwright`), or run "
+            "`playwright install chromium` on this machine and restart the app."
+        )
+        _ensure_playwright_browsers._ok = False
+        return False
+
     logger.info(
         "Playwright browser not installed. Running 'playwright install chromium' now. "
         "This downloads ~130 MB and takes ~30 seconds on first run."
     )
     try:
         import subprocess
-        import sys as _sys
         result = subprocess.run(
-            [_sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
+            [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
             timeout=360,
         )
         if result.returncode == 0:
