@@ -1,7 +1,0 @@
-my_venv/
-*.spec
-cleanup.txt
-LICENSE*
-.gitignore
-original files
-extra
