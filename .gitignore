@@ -38,7 +38,8 @@ Thumbs.db
 htmlcov/
 *.spec.bak
 SponsorScout.spec
-
+.gitattributes
+.editorconfig
 
 # ── Backup / temp files ────────────────────────────────────────────────────
 *.bak
