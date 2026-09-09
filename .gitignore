@@ -26,6 +26,7 @@ venv/
 *~
 .DS_Store
 Thumbs.db
+.clineignore
 
 # ── Build / packaging outputs ──────────────────────────────────────────────
 .build/
@@ -37,6 +38,7 @@ Thumbs.db
 htmlcov/
 *.spec.bak
 SponsorScout.spec
+
 
 # ── Backup / temp files ────────────────────────────────────────────────────
 *.bak
@@ -54,11 +56,12 @@ data/*.json
 # Bundled seed CSVs are committed resources — don't ignore them:
 !data/seeds/*.csv
 .clineignore
-extra_for_dev_purpose(do not delete)/
+extra_for_dev_purpose(do not delete)
 original files
 
 # ── Build tools (large binaries, not for git) ─────────────────────────────
 windows_build_tools/
+
 
 # ── OS-specific ────────────────────────────────────────────────────────────
 .DS_Store
