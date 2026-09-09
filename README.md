@@ -80,8 +80,11 @@ Your personal application tracker. Select any saved job to set its status
 
 ### 4. Tools
 The control centre:
-- **Scanner** — start a scan across all seeded companies (Quick = fast,
-  API-only; Full = browser crawl). Live output appears in the log window.
+- **Scanner** — start a scan across all seeded companies using either
+  **Quick** (fast, API-only) or **Full browser** (thorough, also crawls
+  career pages). The two modes return different job counts — see [Quick vs
+  Full Browser Scan](#-quick-scan-vs-full-browser-scan). Live output appears
+  in the log window.
 - **Scan History** — every past scan run; select one to view or download a
   detailed per-company log including errors.
 - **Data Quality** — remove duplicate jobs/companies, clear expired jobs, or
@@ -103,6 +106,34 @@ lists.
 Use the dropdown in the top-right corner of the header to switch between
 **English** and **Italiano**. Your choice is remembered and restored on the
 next launch.
+
+---
+
+## 🔍 Quick Scan vs Full Browser Scan
+
+There are **two scan modes**, and choosing the right one matters because they
+produce **different job results**:
+
+### ⚡ Quick Scan (API-only)
+- Pulls jobs **only from the official job-board APIs** of companies that use a
+  known ATS (Ashby, Greenhouse, Lever, SmartRecruiters, Personio, Recruitee,
+  Workable, Workday).
+- **Fast** — usually completes in seconds to a minute.
+- **Partial results** — any company that does *not* expose a public ATS API
+  (i.e. only has a career page) is skipped, so **its jobs will not appear**.
+
+### 🧭 Full Browser Scan
+- Does **everything the Quick scan does**, then also **crawls each company's
+  own career page** with a headless browser.
+- **Slower** — it must load and parse every page, taking minutes.
+- **Most complete results** — captures jobs from companies with no known ATS,
+  so you see the full picture.
+
+> **Why it matters:** the two modes can return very different job counts.
+> A **Quick scan** is fast but *partial* (only ATS-backed companies), while a
+> **Full browser scan** is slower but *far more complete* because it also
+> covers career-page-only companies. For a thorough job search, prefer a
+> Full browser scan; use Quick when you just want a fast refresh.
 
 ---
 
@@ -260,8 +291,10 @@ aggiungere note.
 
 ### 4. Strumenti (Tools)
 Il centro di controllo:
-- **Scanner** — avvia una scansione su tutte le aziende nell'elenco (Veloce
-  = rapida, solo API; Completa = ricerca con browser). L'output live appare
+- **Scanner** — avvia una scansione su tutte le aziende nell'elenco usando
+  **Veloce** (rapida, solo API) o **Completa / browser** (approfondita,
+  esplora anche le pagine carriera). Le due modalità restituiscono conteggi di
+  lavori diversi — vedi [Scansione Veloce vs Scansione Completa](#-scansione-veloce-vs-scansione-completa). L'output live appare
   nella finestra di log.
 - **Cronologia Scansioni** — ogni scansione passata; selezionane una per
   visualizzare o scaricare un registro dettagliato per azienda, errori
@@ -286,6 +319,36 @@ Usa il menu a tendina nell'angolo in alto a destra dell'intestazione per
 passare da **Italiano** a **English**. La tua scelta viene salvata e
 ripristinata al prossimo avvio. Puoi anche leggere la documentazione in
 inglese nel file [README.md](README.md).
+
+---
+
+## 🔍 Scansione Veloce vs Scansione Completa
+
+Ci sono **due modalità di scansione** e scegliere quella giusta è importante
+perché producono **risultati di lavori diversi**:
+
+### ⚡ Scansione Veloce (solo API)
+- Recupera i lavori **solo dalle API ufficiali delle bacheche** delle aziende
+  che usano un ATS noto (Ashby, Greenhouse, Lever, SmartRecruiters, Personio,
+  Recruitee, Workable, Workday).
+- **Rapida** — di solito completa in secondi o al massimo un minuto.
+- **Risultati parziali** — ogni azienda che *non* espone un'API ATS pubblica
+  (cioè con solo una pagina carriera) viene saltata, quindi **i suoi lavori
+  non compariranno**.
+
+### 🧭 Scansione Completa (con browser)
+- Fa **tutto ciò che fa la scansione Veloce**, poi **esplora anche la pagina
+  carriera di ogni azienda** con un browser headless.
+- **Più lenta** — deve caricare e analizzare ogni pagina, impiegando minuti.
+- **Risultati più completi** — cattura i lavori delle aziende senza un ATS
+  noto, così vedi il quadro completo.
+
+> **Perché è importante:** le due modalità possono restituire conteggi di
+> lavori molto diversi. Una **scansione Veloce** è rapida ma *parziale* (solo
+> aziende con ATS), mentre una **scansione Completa** è più lenta ma *molto
+> più esaustiva* perché copre anche le aziende con sola pagina carriera. Per
+> una ricerca completa preferisci la scansione Completa; usa la Veloce quando
+> vuoi solo un aggiornamento rapido.
 
 ---
 
