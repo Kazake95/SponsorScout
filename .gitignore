@@ -56,7 +56,7 @@ data/*.json
 # Bundled seed CSVs are committed resources — don't ignore them:
 !data/seeds/*.csv
 .clineignore
-extra_for_dev_purpose(do not delete)
+extra_for_dev_purpose(do not delete)/
 original files
 
 # ── Build tools (large binaries, not for git) ─────────────────────────────
