@@ -8,7 +8,7 @@ from __future__ import annotations
 from sponsorscout.core.location_country import country_from_location
 
 
-def migrate_job_countries(conn) -> int:
+def migrate_job_countries(conn, force: bool = False) -> int:
     """
     Re-derive country from location string for every job in the DB.
     Returns number of rows updated.
@@ -18,10 +18,20 @@ def migrate_job_countries(conn) -> int:
     corrected. Now we only update jobs whose current country is either
     empty or one of the legacy placeholder values ("Remote", ""), so
     manual fixes survive subsequent launches.
+
+    force=True re-derives EVERY row (one-time repair after deriver fixes;
+    CLI --force). Rows flagged country_source='manual' are still skipped
+    unless force is set.
     """
-    rows = conn.execute(
-        "SELECT id, location, country FROM jobs"
-    ).fetchall()
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "country_source" in cols:
+        rows = conn.execute(
+            "SELECT id, location, country, country_source FROM jobs"
+        ).fetchall()
+    else:  # pre-migration DBs
+        rows = conn.execute(
+            "SELECT id, location, country FROM jobs"
+        ).fetchall()
 
     # Country values that indicate the job needs (re)derivation. Anything
     # else (e.g. a user-corrected "United States" on a job the auto-deriver
@@ -31,8 +41,14 @@ def migrate_job_countries(conn) -> int:
     updated = 0
     for row in rows:
         old_country = row["country"] or ""
-        if old_country.lower() not in LEGACY_OR_EMPTY:
-            continue
+        if not force:
+            if old_country.lower() not in LEGACY_OR_EMPTY:
+                continue
+            try:
+                if (row["country_source"] or "auto") == "manual":
+                    continue
+            except (IndexError, KeyError):
+                pass
         location = row["location"] or ""
         new_country = country_from_location(location, fallback=old_country)
         if new_country and new_country != old_country:
@@ -48,8 +64,11 @@ def migrate_job_countries(conn) -> int:
 
 
 if __name__ == "__main__":
+    import sys
     from sponsorscout.db.database import get_connection, DB_PATH
+    force = "--force" in sys.argv or "--all" in sys.argv
     conn = get_connection(DB_PATH)
-    n = migrate_job_countries(conn)
+    n = migrate_job_countries(conn, force=force)
+    conn.commit()
     conn.close()
-    print(f"Updated {n} job country records.")
+    print(f"Updated {n} job country records{' (forced)' if force else ''}.")

@@ -50,13 +50,13 @@ python -m sponsorscout.main
 
 **Main Window:** Navy header (#1d2d44) + 5-tab QTabWidget. Logo 28×28, "SponsorScout" 20px bold, subtitle, language combo (10 locales). First-run: if 0 companies + 0 jobs → prompt. Language switching: set_locale() → retranslate() on all tabs.
 
-**Tab 1: Dashboard** — 6 stat cards (Total Companies, Verified Jobs, Sponsored Jobs, Remote Jobs, EU Blue Card, Applications). Tables: Top Companies by Sponsorship (10 rows), Jobs by Country. Buttons: "Rescan Companies" (→ Tools quick scan), "Refresh".
+**Tab 1: Dashboard** — 6 stat cards (Total Companies, Verified Jobs, Sponsored Jobs, Remote Jobs, EU Blue Card, Applications). Tables: Top Companies by Sponsorship (10 rows), Jobs by Country. Buttons: "Rescan Companies" (→ Tools scan), "Refresh".
 
 **Tab 2: Search** — Filters: Title/Company/Location (QLineEdit), Country/Remote (QComboBox), Sponsor/Blue Card/Reloc (QCheckBox), Regex (QCheckBox). Results: 9 columns (Title, Company, Country, Location, Sponsor, Blue Card, Reloc, Remote, Posted). Verdicts: Y (confirmed), N (excluded), ? (unknown). Double-click opens URL; right-click → Open/Save/Copy.
 
 **Tab 3: Applications** — Status pipeline: saved → applied → interview → offer → rejected. Table: Company, Title, Status, Saved on, URL. Edit form on selection: Status combo + Notes + Save/Cancel.
 
-**Tab 4: Tools** — Scanner: Method (Quick/Full), Start/Stop, progress log (QPlainTextEdit). History: scan runs table + double-click → per-company scan_log dialog. Data quality: Dedup companies/jobs, Clear expired/unknowns. Freshness: Verify links button + results table (background thread).
+**Tab 4: Tools** — Scanner: single "Scan Now" action (no method dropdown; always the thorough scan), Stop, progress log (QPlainTextEdit). History: scan runs table + double-click → per-company scan_log dialog. Data quality: Dedup companies/jobs, Clear expired/unknowns. Freshness: Verify links button + results table (background thread).
 
 **Tab 5: Data Management** — Sub-tabs: ATS Seeds | Career Seeds. Editable seed table. Actions: Add/Edit/Delete (SeedRowDialog), Import CSV, Export CSV, Reset to bundled defaults. SeedRowDialog: base fields (name, ats_type, url, industry, 3 scores) + advanced (seed_name, canonical_name, target_country, provider, board_slug, notes, source_type, scope_policy). URL auto-detects ATS type.
 
@@ -148,7 +148,7 @@ def derive_sponsorship_score(verdict, confidence, history):
 ```
 
 ### Summary Dict
-{"run_id": str, "method": "quick"|"full", "status": "completed"|"partial"|"cancelled"|"error", "cancelled": bool, "ingested": int, "duplicates": int, "log_rows": int, "artifacts": {"ats": {...}, "career": {...}}, "errors": [str, ...]}
+{"run_id": str, "method": "full" (default) | "quick" (dev CLI), "status": "completed"|"partial"|"cancelled"|"error", "cancelled": bool, "ingested": int, "duplicates": int, "log_rows": int, "artifacts": {"ats": {...}, "career": {...}}, "errors": [str, ...]}
 
 ---
 
@@ -178,7 +178,7 @@ def derive_sponsorship_score(verdict, confidence, history):
 **ATSScanner:** Preflight: probes Google/Greenhouse/Ashby/Lever/SmartRecruiters APIs. Retry: 3 attempts, 1.5s backoff, 35s timeout. SEED_UPGRADE: InnoGames→EU Lever, Avomind→recruiter. KNOWN_BOARD_ISSUES: surfaces empty/404 boards. BAD_HOSTS: blocks glassdoor/indeed/linkedin/etc. Output: 35-col CSV + 15-col scan log + recruiter + quarantine. Cancellation: cancel_event checked between targets, never interrupts in-flight requests.
 
 **CareerScanner:** Playwright browser for JS pages, HTTP fallback. JS_HELPERS: querySelectorAllDeep (shadow DOM), isVisible, isBadScope, looksJobUrl (two-pass), firstGoodLine (multi-pass title), badLocationRe (rejects departments/brands/contract words). Location: COUNTRIES_AND_REGIONS + KNOWN_CITIES + Chinese cities, diacritic-insensitive (Wrocław↔wroclaw, München↔munchen). JS-based pagination traversal.
-**Pipeline (pipeline.py):** run_scan(method, db_path, cancel_event, progress). method: "quick" (ATS only) | "full" (ATS+Career). Flow: 1) Load+merge seeds 2) Sync companies to DB 3) ATS scan → CSV artifacts 4) If full: career scan → CSV artifacts 5) Ingest: dedup (canonical_job_id) → upsert_job → copy scan_log rows 6) Finalize scan_runs 7) Return summary. Error handling: status="error" if ingested==0, "cancelled" if stopped, "partial" if some errors, "completed" otherwise.
+**Pipeline (pipeline.py):** run_scan(method, db_path, cancel_event, progress). method: "full" (default — every phase plus per-job detail-page enrichment) | "quick" (dev CLI only — same phases, skips the detail enrichment so more verdicts stay Unknown). The UI exposes a single scan mode and always passes "full". Flow: 1) Load+merge seeds 2) Sync companies to DB 3) ATS scan → CSV artifacts 4) Career scan → CSV artifacts (detail-page enrichment runs when method="full") 5) Ingest: dedup (canonical_job_id) → upsert_job → copy scan_log rows 6) Finalize scan_runs 7) Return summary. Error handling: status="error" if ingested==0, "cancelled" if stopped, "partial" if some errors, "completed" otherwise.
 
 ---
 
@@ -256,7 +256,7 @@ Dev Setup: pip install -e . ; pip install -e ".[dev]" ; playwright install chrom
 
 **Build:** Linux .deb (build_deb.sh) / Windows .exe (build_exe.ps1) — PyInstaller, bundles Chromium. Inno Setup sets PLAYWRIGHT_BROWSERS_PATH in HKCU\Environment.
 
-**Testing:** 1) Start app 2) Add companies 3) Run scan (Quick/Full) 4) Verify Dashboard/Search 5) Test cancellation 6) Test i18n 7) Test data management edits.
+**Testing:** 1) Start app 2) Add companies 3) Run scan 4) Verify Dashboard/Search 5) Test cancellation 6) Test i18n 7) Test data management edits.
 **Modify Visa Detection:** scanning/jd_support.py — JDSupportDetector. Never keyword-only, always context-aware. Verdicts Y/N/Unknown only. Update VISA_CONCEPTS, RELOCATION_CONCEPTS, POSITIVE_VERBS, NEGATION, REQUIREMENT, CONDITIONAL, SCOPE. Add EXTRA_LANGS for new languages.
 
 **DB Schema Changes:** db/database.py — _apply_migrations(). Check existing_cols before ALTER. Update persistence.py if special handling needed.
@@ -273,4 +273,4 @@ Dev Setup: pip install -e . ; pip install -e ".[dev]" ; playwright install chrom
 
 **Build:** Linux .deb (build_deb.sh) / Windows .exe (build_exe.ps1) — PyInstaller, bundles Chromium. Inno Setup sets PLAYWRIGHT_BROWSERS_PATH in HKCU\Environment.
 
-**Testing:** 1) Start app 2) Add companies 3) Run scan (Quick/Full) 4) Verify Dashboard/Search 5) Test cancellation 6) Test i18n 7) Test data management edits.
+**Testing:** 1) Start app 2) Add companies 3) Run scan 4) Verify Dashboard/Search 5) Test cancellation 6) Test i18n 7) Test data management edits.

@@ -7,7 +7,7 @@ per-run scan history view backed by the scan_runs / scan_log tables.
 
 import threading
 
-from PySide6.QtCore import QStandardPaths, QUrl, Signal
+from PySide6.QtCore import QStandardPaths, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from sponsorscout import paths
 from sponsorscout.application.scan_coordinator import ScanCoordinator
 from sponsorscout.core.dedup import dedup_companies_in_db, dedup_jobs_in_db
 from sponsorscout.db import database as db
@@ -25,6 +26,12 @@ HEADERS_RUNS = ["Run ID", "Method", "Started", "Status", "Jobs", "Dups",
 HEADERS_LOG = ["Seed", "Company", "Source", "Target Country", "Status",
                "Provider", "Jobs", "Quar.", "Dups", "Scope Rej.",
                "Error", "Diagnostics", "Duration (s)", "Seed URL"]
+
+# Single scan mode.  The app exposes exactly one scan action: the thorough
+# campaign (ATS APIs + career crawls + per-job detail-page enrichment) so
+# every job row is extracted with full detail and accurate verdicts.
+# ``"quick"`` is still supported by the pipeline for the dev CLI only.
+SCAN_METHOD = "full"
 
 
 class ScanLogDialog(QDialog):
@@ -64,9 +71,151 @@ class ScanLogDialog(QDialog):
         lay.addWidget(table)
 
 
+class QuarantineDialog(QDialog):
+    """Browse run quarantine CSVs and promote legit rows into jobs (G4a).
+
+    Quarantined rows are never auto-ingested; this dialog is the manual
+    review path: filter by quarantine reason, inspect, and promote the
+    rows that are real jobs. Promotion reuses the pipeline's _row_to_job
+    mapping so promoted rows are identical to accepted ones.
+    """
+
+    HEADERS = ["Company", "Title", "Location", "Reason", "URL"]
+
+    def __init__(self, db_path: str, parent=None):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.setWindowTitle(_("Quarantine Review"))
+        self.resize(1280, 620)
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        self.file_combo = QComboBox()
+        self.reason_combo = QComboBox()
+        self.reason_combo.currentIndexChanged.connect(self._refilter)
+        top.addWidget(QLabel(_("Artifact:")))
+        top.addWidget(self.file_combo, stretch=1)
+        top.addWidget(QLabel(_("Reason:")))
+        top.addWidget(self.reason_combo)
+        load_btn = QPushButton(_("Load"))
+        load_btn.clicked.connect(self._load_file)
+        top.addWidget(load_btn)
+        lay.addLayout(top)
+        self.table = QTableWidget(0, len(self.HEADERS))
+        self.table.setHorizontalHeaderLabels(self.HEADERS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch)
+        lay.addWidget(self.table, stretch=1)
+        bottom = QHBoxLayout()
+        self.info = QLabel("")
+        promote_btn = QPushButton(_("Promote Selected to Jobs"))
+        promote_btn.clicked.connect(self._promote_selected)
+        bottom.addWidget(self.info, stretch=1)
+        bottom.addWidget(promote_btn)
+        lay.addLayout(bottom)
+        self._rows: list = []
+        self._discover_files()
+
+    def _discover_files(self):
+        self.file_combo.clear()
+        try:
+            out_dir = paths.SCAN_OUTPUT_DIR
+        except Exception:
+            out_dir = None
+        import glob as _glob
+        import os as _os
+        files = (sorted(_glob.glob(
+            str(_os.path.join(str(out_dir), "*quarantine.csv"))))
+            if out_dir else [])
+        if files:
+            self.file_combo.addItems(files)
+            self.file_combo.setCurrentIndex(len(files) - 1)  # newest run
+            self._load_file()
+        else:
+            self.info.setText(_("No quarantine artifacts found."))
+
+    def _load_file(self):
+        import csv as _csv
+        path = self.file_combo.currentText()
+        self._rows = []
+        if path:
+            try:
+                with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                    self._rows = list(_csv.DictReader(f))
+            except OSError as exc:
+                QMessageBox.critical(self, _("Error"), str(exc))
+        reasons = sorted({(r.get("Quarantine Reason") or "?")
+                          for r in self._rows})
+        self.reason_combo.blockSignals(True)
+        self.reason_combo.clear()
+        self.reason_combo.addItem(_("All reasons"))
+        self.reason_combo.addItems(reasons)
+        self.reason_combo.blockSignals(False)
+        self._refilter()
+
+    def _refilter(self):
+        want = self.reason_combo.currentText()
+        show_all = want in (_("All reasons"), "")
+        self.table.setRowCount(0)
+        shown = 0
+        for idx, r in enumerate(self._rows):
+            reason = r.get("Quarantine Reason") or "?"
+            if not show_all and reason != want:
+                continue
+            i = self.table.rowCount()
+            self.table.insertRow(i)
+            vals = [r.get("Company Name", ""), r.get("Job Title", ""),
+                    r.get("Job Location", ""), reason,
+                    r.get("Job URL", "")]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(str(val or ""))
+                if col == 0:
+                    item.setData(Qt.UserRole, idx)
+                self.table.setItem(i, col, item)
+            shown += 1
+        self.info.setText(
+            _("{shown} of {total} quarantined rows.").format(
+                shown=shown, total=len(self._rows)))
+
+    def _promote_selected(self):
+        sel = sorted({i.row() for i in self.table.selectedIndexes()})
+        if not sel:
+            QMessageBox.information(
+                self, _("Quarantine"), _("Select rows first."))
+            return
+        from sponsorscout.core import persistence
+        from sponsorscout.scanning import pipeline
+        conn = db.get_connection(self.db_path)
+        promoted = 0
+        try:
+            for table_row in sel:
+                src_idx = self.table.item(table_row, 0).data(Qt.UserRole)
+                row = self._rows[src_idx]
+                subtype = ("recruiter"
+                           if (row.get("Source Type") or "") == "recruiter"
+                           else "direct")
+                job = pipeline._row_to_job(
+                    row, source_subtype=subtype,
+                    run_id=row.get("Run ID") or "manual-promote")
+                if job is None:
+                    continue
+                persistence.upsert_job(conn, job, commit=False)
+                promoted += 1
+            conn.commit()
+        finally:
+            conn.close()
+        QMessageBox.information(
+            self, _("Quarantine"),
+            _("{n} row(s) promoted into jobs.").format(n=promoted))
+
+
 class ToolsTab(QWidget):
     """Scanner control + data-quality tools (mirrors the original Tools tab)."""
 
+    scan_started = Signal()       # emitted at the beginning of start_scan
     scan_finished = Signal(dict)
     data_changed = Signal()        # jobs/companies data may have changed
     status_message = Signal(str)
@@ -116,25 +265,27 @@ class ToolsTab(QWidget):
         self._add_section_help(scanner, _("Scanner description"))
         row = QHBoxLayout()
         row.setSpacing(8)
-        self.method_label = QLabel(_("Method"))
-        self.method_combo = QComboBox()
-        self.method_combo.addItem(_("Quick (API-first)"), "quick")
-        self.method_combo.addItem(_("Full (browser crawl)"), "full")
         self.scan_btn = QPushButton(_("Scan Now"))
         self.scan_btn.setObjectName("Primary")
+        self.scan_btn.setToolTip(
+            _("Scan every seeded company (ATS boards + career pages) and "
+              "enrich each job from its detail page, so no listing misses "
+              "its evidence."))
         self.scan_btn.clicked.connect(self.start_scan)
         self.stop_btn = QPushButton(_("Stop"))
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.coordinator.stop)
         self.scan_status = QLabel(_("Idle"))
-        for w in (self.method_label, self.method_combo, self.scan_btn,
-                  self.stop_btn, self.scan_status):
+        for w in (self.scan_btn, self.stop_btn, self.scan_status):
             row.addWidget(w)
         row.addStretch(1)
         lay.addLayout(row)
         self.scan_log = QPlainTextEdit()
         self.scan_log.setReadOnly(True)
         self.scan_log.setMaximumHeight(180)
+        # Bound the widget's memory: a full scan emits many thousands of lines
+        # and an unbounded QPlainTextEdit keeps every one of them.
+        self.scan_log.setMaximumBlockCount(4000)
         self.scan_log.setPlaceholderText(_("Scan output appears here…"))
         lay.addWidget(self.scan_log)
         return scanner
@@ -176,9 +327,12 @@ class ToolsTab(QWidget):
         self.stale_btn.clicked.connect(self._clear_stale_data)
         self.clear_scan_btn = QPushButton(_("Clear Scan Data"))
         self.clear_scan_btn.clicked.connect(self._clear_scan_data)
+        self.quarantine_btn = QPushButton(_("Review Quarantine"))
+        self.quarantine_btn.clicked.connect(self._review_quarantine)
         lay.addWidget(self.dedup_btn)
         lay.addWidget(self.stale_btn)
         lay.addWidget(self.clear_scan_btn)
+        lay.addWidget(self.quarantine_btn)
         lay.addStretch(1)
         return box
 
@@ -210,13 +364,15 @@ class ToolsTab(QWidget):
             QMessageBox.information(self, _("SponsorScout"),
                                     _("A scan is already running."))
             return
-        method = self.method_combo.currentData()
+        # Single scan mode (see SCAN_METHOD): no method choice is offered —
+        # the app always runs the campaign that extracts the most accurate
+        # data for every job.
         self.scan_log.clear()
         self.scan_status.setText(_("Running…"))
         self.scan_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.status_message.emit(_("Scan started"))
-        self.coordinator.start(method)
+        self.coordinator.start(SCAN_METHOD)
 
     def _on_scan_progress(self, line: str):
         self.scan_log.appendPlainText(line)
@@ -309,6 +465,10 @@ class ToolsTab(QWidget):
                     row_idx, col, QTableWidgetItem(str(val if val is not None else "")))
 
     # ── Data-quality actions (ported from the original Tools tab) ───────────
+    def _review_quarantine(self):
+        QuarantineDialog(self.db_path, self).exec()
+        self.data_changed.emit()
+
     def _run_dedup(self):
         try:
             conn = db.get_connection(self.db_path)
@@ -356,10 +516,6 @@ class ToolsTab(QWidget):
                 conn.execute("DELETE FROM scan_runs")
                 conn.execute("DELETE FROM scan_log")
                 conn.execute("DELETE FROM scan_events")
-                try:
-                    conn.execute("DELETE FROM jobs_fts")
-                except Exception:
-                    pass  # FTS table may not exist in very old DBs
                 conn.commit()
                 conn.execute("VACUUM")
             finally:
@@ -433,10 +589,11 @@ class ToolsTab(QWidget):
                     if not jr:
                         continue
                     result = verify_job(dict(jr))
-                    upsert_job(conn, result)
+                    upsert_job(conn, result, commit=False)
                     if result.get("is_expired"):
                         expired += 1
                     checked += 1
+                conn.commit()
             finally:
                 conn.close()
             self._freshness_done.emit(
@@ -471,13 +628,11 @@ class ToolsTab(QWidget):
                     txt = _(key)
                     help_lbl.setText(txt)
                     box.setToolTip(txt)
-        self.method_label.setText(_("Method"))
-        idx = self.method_combo.currentIndex()
-        self.method_combo.clear()
-        self.method_combo.addItem(_("Quick (API-first)"), "quick")
-        self.method_combo.addItem(_("Full (browser crawl)"), "full")
-        self.method_combo.setCurrentIndex(max(0, idx))
         self.scan_btn.setText(_("Scan Now"))
+        self.scan_btn.setToolTip(
+            _("Scan every seeded company (ATS boards + career pages) and "
+              "enrich each job from its detail page, so no listing misses "
+              "its evidence."))
         self.stop_btn.setText(_("Stop"))
         self.scan_log.setPlaceholderText(_("Scan output appears here…"))
         self.view_log_btn.setText(_("View Per-Company Log"))
@@ -485,6 +640,7 @@ class ToolsTab(QWidget):
         self.dedup_btn.setText(_("Run Dedup"))
         self.stale_btn.setText(_("Clear Stale Data"))
         self.clear_scan_btn.setText(_("Clear Scan Data"))
+        self.quarantine_btn.setText(_("Review Quarantine"))
         self.fresh_btn.setText(_("Run"))
         self.runs_table.setHorizontalHeaderLabels([
             _("Run ID"), _("Method"), _("Started"), _("Status"),

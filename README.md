@@ -2,11 +2,26 @@
 
 # SponsorScout
 
-[🇬🇧 English](#-english) · [🇮🇹 Italiano](#-italiano)
+[🇬🇧 English](#english) · [🇮🇹 Italiano](#italiano)
 
 ---
 
 # 🇬🇧 English
+
+## 📖 Table of Contents
+
+- [Download](#download)
+- [What SponsorScout Does](#what-sponsorscout-does)
+- [Quick Start](#quick-start)
+- [The Five Tabs](#the-five-tabs)
+- [Language Switching](#language-switching)
+- [One Scan Mode — Always the Complete One](#one-scan-mode-always-the-complete-one)
+- [How Scanning Works](#how-scanning-works)
+- [Where Your Data Lives](#where-your-data-lives)
+- [Troubleshooting & FAQ](#troubleshooting-faq)
+- [Building From Source](#building-from-source)
+- [Requirements](#requirements)
+- [License](#license)
 
 ## 📥 Download
 
@@ -19,8 +34,8 @@ Ready-to-use installers are published on the GitHub Releases page:
 | Windows 10 / 11 | `sponsorscout-<version>-setup.exe` |
 | Linux (Debian / Ubuntu) | `sponsorscout_<version>_amd64.deb` |
 
-> The links above point to the Releases page — paste your published asset
-> URLs here when the release is live.
+> Every release ships both installers as assets on that page — pick the file
+> for your platform. Older versions are listed under **Releases**.
 
 ---
 
@@ -80,11 +95,12 @@ Your personal application tracker. Select any saved job to set its status
 
 ### 4. Tools
 The control centre:
-- **Scanner** — start a scan across all seeded companies using either
-  **Quick** (fast, API-only) or **Full browser** (thorough, also crawls
-  career pages). The two modes return different job counts — see [Quick vs
-  Full Browser Scan](#-quick-scan-vs-full-browser-scan). Live output appears
-  in the log window.
+- **Scanner** — a single **Scan Now** button: scans every seeded company
+  (ATS boards through their official APIs *and* career pages through a
+  headless browser), then enriches each job from its own detail page so the
+  verdicts are as accurate as possible. Live output appears in the log
+  window. There is no mode to choose — see
+  [One Scan Mode](#one-scan-mode-always-the-complete-one).
 - **Scan History** — every past scan run; select one to view or download a
   detailed per-company log including errors.
 - **Data Quality** — remove duplicate jobs/companies, clear expired jobs, or
@@ -109,31 +125,27 @@ next launch.
 
 ---
 
-## 🔍 Quick Scan vs Full Browser Scan
+## 🔍 One Scan Mode — Always the Complete One
 
-There are **two scan modes**, and choosing the right one matters because they
-produce **different job results**:
+SponsorScout has a **single scan mode**: pressing **Scan Now** always runs
+the complete campaign, because a partial scan would silently hide jobs.
 
-### ⚡ Quick Scan (API-only)
-- Pulls jobs **only from the official job-board APIs** of companies that use a
-  known ATS (Ashby, Greenhouse, Lever, SmartRecruiters, Personio, Recruitee,
-  Workable, Workday).
-- **Fast** — usually completes in seconds to a minute.
-- **Partial results** — any company that does *not* expose a public ATS API
-  (i.e. only has a career page) is skipped, so **its jobs will not appear**.
+### What a scan does
+- **ATS boards (API)** — every seeded company with a known ATS (Ashby,
+  Greenhouse, Lever, SmartRecruiters, Personio, Recruitee, Workable,
+  Workday) is pulled through its official job-board API.
+- **Career pages (browser)** — every seeded company is also crawled through
+  its own career page with a headless browser, so career-page-only companies
+  are never skipped.
+- **Detail-page enrichment** — each job is then verified against its own job
+  page (JSON-LD + page text) to fill in location, sponsorship, relocation
+  and EU Blue Card evidence. Nothing is guessed: a verdict is only upgraded
+  when the page provides explicit evidence.
 
-### 🧭 Full Browser Scan
-- Does **everything the Quick scan does**, then also **crawls each company's
-  own career page** with a headless browser.
-- **Slower** — it must load and parse every page, taking minutes.
-- **Most complete results** — captures jobs from companies with no known ATS,
-  so you see the full picture.
-
-> **Why it matters:** the two modes can return very different job counts.
-> A **Quick scan** is fast but *partial* (only ATS-backed companies), while a
-> **Full browser scan** is slower but *far more complete* because it also
-> covers career-page-only companies. For a thorough job search, prefer a
-> Full browser scan; use Quick when you just want a fast refresh.
+> **Why only one mode?** The old **Quick** option never found *more* or
+> *fewer* jobs — it only skipped the detail-page pass, leaving more verdicts
+> shown as `?` and some locations blank. For a sponsorship search that is
+> the wrong trade-off, so the app no longer asks you to choose.
 
 ---
 
@@ -168,6 +180,59 @@ raw scan-log CSVs under `scan_output/`.
 
 You can override the location with the `SPONSORSCOUT_DATA_DIR` (or
 `SPONSORSCOUT_DB_PATH`) environment variable.
+
+---
+
+## 🧰 Troubleshooting & FAQ
+
+**A scan finished but the Dashboard looks empty.**
+Click **Refresh** on the Dashboard. If it is still empty, open the Tools tab and
+check the latest **Scan History** row: an `error` status, or a **Scan log** with
+failures, tells you which companies did not return jobs.
+
+**The log says "Chromium browser is not available".**
+JS-rendered career pages are crawled with Playwright Chromium. Both official
+installers bundle it; a source checkout needs it once:
+`python -m playwright install chromium`.
+
+**Only some companies returned jobs.**
+Some companies simply have no open positions right now (`EMPTY` in the log).
+Others may temporarily block automated access; running the scan again later
+usually fills them in. Nothing is dropped silently - every outcome is recorded
+in the scan log.
+
+**The scan is slow, or the PC feels heavy.**
+That is the detail-page pass, and it is bounded by design. SponsorScout sizes
+its own worker/browser pool from your CPU and RAM (a single browser on a 2-core
+/ 8 GB machine), runs at below-normal process priority, and disables images,
+GPU and background networking while crawling. The Dashboard stays usable and
+**Stop** cancels immediately.
+
+**A job shows `?` for Sponsor / Blue Card / Relocation.**
+`?` means *unknown*, never *no*. The listing did not contain explicit evidence
+either way, so SponsorScout refuses to guess - open the job and judge it
+yourself. Jobs are never removed just because a verdict is unknown.
+
+**Can I add my own companies?**
+Yes. Open **Data Management** and use the `ATS Portals` / `Career Portals`
+editors: add a company name and its careers URL and the ATS type is detected
+automatically. Changes apply on the next scan. **Reset to bundled defaults**
+brings back the shipped lists.
+
+**How do I search with a regular expression?**
+In the **Search** tab tick **Regex**, then type a pattern in the title, company
+or location box - for example `(backend|platform).*engineer` matches both
+"Backend Engineer" and "Platform Engineer". Matching is case-insensitive, and
+an invalid pattern shows a warning and falls back to a normal search instead of
+returning nothing.
+
+**Where is my data, and how do I back it up?**
+See [Where Your Data Lives](#where-your-data-lives). Copying
+`sponsorscout.db` backs up all jobs, companies and applications.
+
+**Does anything leave my computer?**
+No. Everything is stored in a local SQLite database. The only outbound traffic
+is fetching the job listings you asked for.
 
 ---
 
@@ -215,6 +280,21 @@ MIT — see [LICENSE](LICENSE).
 
 # 🇮🇹 Italiano
 
+## 📖 Indice
+
+- [Scarica](#scarica)
+- [Cosa Fa SponsorScout](#cosa-fa-sponsorscout)
+- [Avvio Rapido](#avvio-rapido)
+- [Le Cinque Schede](#le-cinque-schede)
+- [Cambio Lingua](#cambio-lingua)
+- [Una Sola Modalità di Scansione — Sempre quella Completa](#una-sola-modalità-di-scansione-sempre-quella-completa)
+- [Come Funziona la Scansione](#come-funziona-la-scansione)
+- [Dove Sono i Tuoi Dati](#dove-sono-i-tuoi-dati)
+- [Risoluzione Problemi e Domande Frequenti](#risoluzione-problemi-e-domande-frequenti)
+- [Compilare dai Sorgenti](#compilare-dai-sorgenti)
+- [Requisiti](#requisiti)
+- [Licenza](#licenza)
+
 ## 📥 Scarica
 
 I programmi di installazione pronti all'uso sono pubblicati nella pagina GitHub Releases:
@@ -226,8 +306,9 @@ I programmi di installazione pronti all'uso sono pubblicati nella pagina GitHub 
 | Windows 10 / 11 | `sponsorscout-<versione>-setup.exe` |
 | Linux (Debian / Ubuntu) | `sponsorscout_<versione>_amd64.deb` |
 
-> I collegamenti sopra portano alla pagina Releases — incolla qui gli URL
-> diretti dei file quando la versione sarà pubblicata.
+> Ogni versione pubblica entrambi gli installer come file allegati in quella
+> pagina — scegli quello per la tua piattaforma. Le versioni precedenti sono
+> elencate sotto **Releases**.
 
 ---
 
@@ -291,11 +372,12 @@ aggiungere note.
 
 ### 4. Strumenti (Tools)
 Il centro di controllo:
-- **Scanner** — avvia una scansione su tutte le aziende nell'elenco usando
-  **Veloce** (rapida, solo API) o **Completa / browser** (approfondita,
-  esplora anche le pagine carriera). Le due modalità restituiscono conteggi di
-  lavori diversi — vedi [Scansione Veloce vs Scansione Completa](#-scansione-veloce-vs-scansione-completa). L'output live appare
-  nella finestra di log.
+- **Scanner** — un unico pulsante **Scansiona Ora**: scansiona ogni azienda
+  nell'elenco (bacheche ATS tramite le loro API ufficiali *e* pagine carriera
+  tramite un browser headless), poi arricchisce ogni lavoro dalla sua pagina di
+  dettaglio, così i verdetti sono il più accurati possibile. L'output live
+  appare nella finestra di log. Non c'è alcuna modalità da scegliere — vedi
+  [Una Sola Modalità di Scansione](#una-sola-modalità-di-scansione-sempre-quella-completa).
 - **Cronologia Scansioni** — ogni scansione passata; selezionane una per
   visualizzare o scaricare un registro dettagliato per azienda, errori
   inclusi.
@@ -317,40 +399,39 @@ predefiniti" ripristina gli elenchi originali.
 
 Usa il menu a tendina nell'angolo in alto a destra dell'intestazione per
 passare da **Italiano** a **English**. La tua scelta viene salvata e
-ripristinata al prossimo avvio. Puoi anche leggere la documentazione in
-inglese nel file [README.md](README.md).
+ripristinata al prossimo avvio.
 
 ---
 
-## 🔍 Scansione Veloce vs Scansione Completa
+## 🔍 Una Sola Modalità di Scansione — Sempre quella Completa
 
-Ci sono **due modalità di scansione** e scegliere quella giusta è importante
-perché producono **risultati di lavori diversi**:
+SponsorScout ha **una sola modalità di scansione**: premendo **Scansiona Ora**
+si esegue sempre la campagna completa, perché una scansione parziale
+nasconderebbe dei lavori senza alcun avviso.
 
-### ⚡ Scansione Veloce (solo API)
-- Recupera i lavori **solo dalle API ufficiali delle bacheche** delle aziende
-  che usano un ATS noto (Ashby, Greenhouse, Lever, SmartRecruiters, Personio,
-  Recruitee, Workable, Workday).
-- **Rapida** — di solito completa in secondi o al massimo un minuto.
-- **Risultati parziali** — ogni azienda che *non* espone un'API ATS pubblica
-  (cioè con solo una pagina carriera) viene saltata, quindi **i suoi lavori
-  non compariranno**.
+### Cosa fa una scansione
+- **Bacheche ATS (API)** — ogni azienda nell'elenco con un ATS noto (Ashby,
+  Greenhouse, Lever, SmartRecruiters, Personio, Recruitee, Workable, Workday)
+  viene interrogata tramite l'API ufficiale della sua bacheca lavori.
+- **Pagine carriera (browser)** — ogni azienda viene esplorata anche sulla
+  propria pagina carriera con un browser headless, quindi le aziende con la
+  sola pagina carriera non vengono mai saltate.
+- **Arricchimento dalla pagina di dettaglio** — ogni lavoro viene poi
+  verificato sulla propria pagina (JSON-LD + testo della pagina) per ricavare
+  località, sponsorizzazione, trasferimento e Carta Blu UE. Nulla viene
+  ipotizzato: un verdetto viene aggiornato solo se la pagina fornisce
+  un'evidenza esplicita.
 
-### 🧭 Scansione Completa (con browser)
-- Fa **tutto ciò che fa la scansione Veloce**, poi **esplora anche la pagina
-  carriera di ogni azienda** con un browser headless.
-- **Più lenta** — deve caricare e analizzare ogni pagina, impiegando minuti.
-- **Risultati più completi** — cattura i lavori delle aziende senza un ATS
-  noto, così vedi il quadro completo.
-
-> **Perché è importante:** le due modalità possono restituire conteggi di
-> lavori molto diversi. Una **scansione Veloce** è rapida ma *parziale* (solo
-> aziende con ATS), mentre una **scansione Completa** è più lenta ma *molto
-> più esaustiva* perché copre anche le aziende con sola pagina carriera. Per
-> una ricerca completa preferisci la scansione Completa; usa la Veloce quando
-> vuoi solo un aggiornamento rapido.
+> **Perché una sola modalità?** La vecchia opzione **Veloce** non trovava né
+> *più* né *meno* lavori — saltava solo la fase di dettaglio, lasciando più
+> verdetti come `?` e alcune località vuote. Per una ricerca di
+> sponsorizzazione è un compromesso sbagliato, quindi l'app non ti chiede più
+> di scegliere.
 
 ---
+
+---
+
 
 ## ⚙️ Come Funziona la Scansione
 
@@ -383,6 +464,60 @@ scansioni), `seeds/` (i tuoi elenchi di aziende modificabili),
 
 Puoi cambiare la posizione con le variabili d'ambiente `SPONSORSCOUT_DATA_DIR`
 (o `SPONSORSCOUT_DB_PATH`).
+
+---
+
+## 🧰 Risoluzione Problemi e Domande Frequenti
+
+**La scansione è finita ma il Pannello sembra vuoto.**
+Clicca **Aggiorna** nel Pannello. Se è ancora vuoto, apri la scheda Strumenti e
+controlla l'ultima riga in **Cronologia Scansioni**: uno stato `error`, o un
+**Registro Scansione** con errori, indica quali aziende non hanno restituito
+lavori.
+
+**Nel log compare "Chromium browser is not available".**
+Le pagine carriera JS vengono esplorate con Playwright Chromium. Entrambi gli
+installer ufficiali lo includono; da codice sorgente serve una volta:
+`python -m playwright install chromium`.
+
+**Solo alcune aziende hanno restituito lavori.**
+Alcune semplicemente non hanno posizioni aperte in questo momento (`EMPTY` nel
+log). Altre possono bloccare temporaneamente l'accesso automatico; rieseguendo
+la scansione più tardi di solito si completano. Nulla viene perso in silenzio:
+ogni esito è registrato nel log della scansione.
+
+**La scansione è lenta o il PC diventa pesante.**
+È la fase di dettaglio, ed è limitata per progettazione. SponsorScout
+dimensiona i propri worker/browser in base a CPU e RAM (un solo browser su un PC
+con 2 core / 8 GB), gira con priorità di processo inferiore al normale e
+disattiva immagini, GPU e rete in background durante l'esplorazione. Il
+Pannello resta utilizzabile e **Stop** annulla immediatamente.
+
+**Un lavoro mostra `?` per Sponsor / Carta Blu / Trasferimento.**
+`?` significa *sconosciuto*, mai *no*. L'annuncio non conteneva un'evidenza
+esplicita, quindi SponsorScout non ipotizza nulla - apri il lavoro e valuta tu.
+I lavori non vengono mai rimossi solo perché un verdetto è sconosciuto.
+
+**Posso aggiungere le mie aziende?**
+Sì. Apri **Gestione Dati** e usa gli editor `Portali ATS` / `Portali Career`:
+inserisci il nome dell'azienda e l'URL carriera, il tipo di ATS viene rilevato
+automaticamente. Le modifiche si applicano alla scansione successiva.
+**Ripristina predefiniti** riporta gli elenchi forniti.
+
+**Come si cerca con un'espressione regolare?**
+Nella scheda **Cerca** spunta **Regex**, poi digita un pattern nel campo
+posizione, azienda o località - per esempio `(backend|platform).*engineer`
+trova sia "Backend Engineer" sia "Platform Engineer". La ricerca non distingue
+maiuscole/minuscole e un pattern non valido mostra un avviso e ripiega su una
+ricerca normale invece di restituire zero risultati.
+
+**Dove sono i miei dati e come faccio un backup?**
+Vedi [Dove Sono i Tuoi Dati](#dove-sono-i-tuoi-dati). Copiando
+`sponsorscout.db` salvi lavori, aziende e candidature.
+
+**Qualcosa esce dal mio computer?**
+No. Tutto è salvato in un database SQLite locale. L'unico traffico in uscita
+sono gli annunci lavori che hai chiesto di scaricare.
 
 ---
 

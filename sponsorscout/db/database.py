@@ -27,14 +27,21 @@ def _configure_connection(conn, db_path=DB_PATH):
 
 
 def _regexp_like(pattern, value):
-    """SQLite REGEXP operator backed by Python's re (compiled once manually).
+    """SQLite REGEXP operator backed by Python's re.
     Returns 1 if value matches pattern, else 0. Invalid patterns match nothing
-    (the caller validates and falls back to LIKE on invalid input)."""
+    (the caller validates and falls back to LIKE on invalid input).
+
+    Case-insensitive on purpose: the non-regex path (LIKE on lower(...)) is
+    case-insensitive too, so enabling the Regex checkbox must never narrow the
+    result set (pattern 'berlin' must still match 'Berlin'; otherwise jobs
+    would be missed by the very filter meant to find them).  Patterns that need
+    case sensitivity can use explicit inline flags, e.g. '(?-i:Berlin)'.
+    """
     import re
     if value is None:
         return 0
     try:
-        return 1 if re.search(pattern, str(value)) else 0
+        return 1 if re.search(pattern, str(value), re.IGNORECASE) else 0
     except re.error:
         return 0
 
@@ -75,6 +82,10 @@ def _apply_migrations(conn):
         ("blue_card_evidence", "ALTER TABLE jobs ADD COLUMN blue_card_evidence TEXT DEFAULT ''"),
         ("canonical_job_id", "ALTER TABLE jobs ADD COLUMN canonical_job_id TEXT DEFAULT ''"),
         ("run_id", "ALTER TABLE jobs ADD COLUMN run_id TEXT DEFAULT ''"),
+        # Raw (un-normalised) location string for future re-derivation (F6),
+        # and the auto/manual provenance flag protecting user corrections.
+        ("raw_location", "ALTER TABLE jobs ADD COLUMN raw_location TEXT DEFAULT ''"),
+        ("country_source", "ALTER TABLE jobs ADD COLUMN country_source TEXT DEFAULT 'auto'"),
     ]
     for col, sql in migrations:
         if col not in existing_cols:
@@ -137,7 +148,9 @@ def _apply_migrations(conn):
     # ── Legacy tables removed with the Tkinter→PySide6 restart ──────────────
     # AI assets (AI features removed per project decision), the discovery
     # engine queue/results, and the connector health table are all obsolete.
-    for legacy in ("user_ai_assets", "company_discovery_queue", "discoveries", "ats_health"):
+    # jobs_fts is dead too: search uses LIKE/REGEXP and nothing writes the FTS
+    # index, so it can only ever be empty.
+    for legacy in ("user_ai_assets", "company_discovery_queue", "discoveries", "ats_health", "jobs_fts"):
         try:
             conn.execute(f"DROP TABLE IF EXISTS {legacy}")
         except Exception as exc:
@@ -248,8 +261,11 @@ def search_jobs(db_path, title="", company="", location="", country="All", sourc
                 query += f" AND {column} REGEXP ?"
                 params.append(value)
             else:
-                query += f" AND lower({column}) LIKE ?"
-                params.append(f"%{value.lower()}%")
+                # Escape LIKE wildcards so literal searches can't act as patterns.
+                escaped = (value.lower().replace("\\", "\\\\")
+                           .replace("%", "\\%").replace("_", "\\_"))
+                query += f" AND lower({column}) LIKE ? ESCAPE '\\'"
+                params.append(f"%{escaped}%")
 
         _add_text_filter("title", title)
         _add_text_filter("company", company)
@@ -595,6 +611,21 @@ def record_scan_log_rows(db_path, run_id: str, scanner: str, rows):
             conn.close()
 
 
+def sum_scan_log_quarantined(db_path, run_id: str) -> int:
+    """Total quarantined rows for one run, summed from scan_log (F9)."""
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        row = conn.execute(
+            "SELECT COALESCE(SUM(quarantined), 0) FROM scan_log WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return int(row[0] or 0)
+    finally:
+        if conn:
+            conn.close()
+
+
 def list_scan_runs(db_path, limit: int = 25):
     """Most recent scan runs first (for the Tools tab scan-history view)."""
     conn = None
@@ -661,6 +692,34 @@ def record_scan_event(db_path, run_id: str, level: str = "info",
             """INSERT INTO scan_events (run_id, level, phase, company, message)
                VALUES (?, ?, ?, ?, ?)""",
             (run_id, level, phase, company, str(message)[:2000]),
+        )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+def record_scan_events(db_path, run_id: str, rows):
+    """Insert many scan_events rows in ONE connection/transaction.
+
+    ``rows`` is an iterable of ``(level, phase, company, message)`` tuples.
+    Batching matters: the single-row ``record_scan_event`` opens and commits a
+    connection per call, so persisting a chatty scan's progress line by line
+    costs tens of thousands of round-trips and dominates disk I/O on low-end
+    machines.
+    """
+    rows = [(run_id, str(level or "info"), str(phase or "pipeline"),
+             str(company or ""), str(message or "")[:2000])
+            for level, phase, company, message in rows]
+    if not rows:
+        return
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        conn.executemany(
+            """INSERT INTO scan_events (run_id, level, phase, company, message)
+               VALUES (?, ?, ?, ?, ?)""",
+            rows,
         )
         conn.commit()
     finally:

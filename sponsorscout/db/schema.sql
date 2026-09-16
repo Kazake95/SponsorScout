@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     title TEXT NOT NULL,
     company TEXT NOT NULL,
     country TEXT DEFAULT '',
+    country_source TEXT DEFAULT 'auto',
     location TEXT DEFAULT '',
+    raw_location TEXT DEFAULT '',
     url TEXT UNIQUE NOT NULL,
     ats_source TEXT DEFAULT '',
     source_type TEXT DEFAULT 'verified',
@@ -142,8 +144,6 @@ CREATE TABLE IF NOT EXISTS applications (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(title, company, description);
 
 CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(title);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);

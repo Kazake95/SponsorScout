@@ -1,47 +1,47 @@
-name,ats_type,careers_url,industry,sponsorship_history,english_friendly,remote_score
-Pleo,ashby,https://jobs.ashbyhq.com/pleo/,Fintech,80,90,75
-Lemon Markets,ashby,https://jobs.ashbyhq.com/lemon-markets,Fintech,80,85,65
-Improbable,ashby,https://jobs.ashbyhq.com/Improbable,Gaming/AI,80,90,65
-Mapbox,ashby,https://jobs.ashbyhq.com/mapbox,GeoTech,80,90,75
-Incident.io,ashby,https://jobs.ashbyhq.com/incident,SaaS,80,95,85
-Sentry,ashby,https://jobs.ashbyhq.com/sentry,Developer Tools,80,95,85
-Linear,ashby,https://jobs.ashbyhq.com/Linear,Developer Tools,80,95,85
-Cargo.one,ashby,https://jobs.ashbyhq.com/cargo-one,Logistics Tech,85,90,95
-Ecosia,ashby,https://jobs.ashbyhq.com/ecosia.org,Search,75,90,65
-BambooHR,greenhouse,https://job-boards.greenhouse.io/bamboohr17,HR Tech,75,90,80
-Contentful,greenhouse,https://boards.greenhouse.io/contentful,SaaS,85,90,75
-Crealytics,personio,https://crealytics.jobs.personio.de/,MarTech,80,85,60
-Adyen,greenhouse,https://job-boards.greenhouse.io/adyen,Fintech,90,95,65
-Backbase,greenhouse,https://job-boards.greenhouse.io/workatbackbase,SaaS,80,85,60
-Bol.com,greenhouse,https://job-boards.greenhouse.io/bolcomen,E-Commerce,80,85,60
-Raisin,greenhouse,https://boards.greenhouse.io/raisin,Fintech,80,85,60
-Wolt,greenhouse,https://boards.greenhouse.io/wolt,Delivery,80,85,55
-Typeform,greenhouse,https://job-boards.greenhouse.io/typeform,SaaS,85,95,80
-Mentimeter,greenhouse,https://job-boards.eu.greenhouse.io/mentimeter,EdTech,75,90,70
-Luno,greenhouse,https://job-boards.greenhouse.io/luno,Crypto,80,90,70
-Monzo,greenhouse,https://job-boards.greenhouse.io/monzo,Fintech,90,95,70
-Figma,greenhouse,https://www.figma.com/careers/#job-openings,Design,85,95,75
-Mixpanel,greenhouse,https://job-boards.greenhouse.io/mixpanel,Analytics,80,90,80
-Netlify,greenhouse,https://job-boards.greenhouse.io/netlify,Developer Tools,85,95,90
-Twilio,greenhouse,https://job-boards.greenhouse.io/twilio,SaaS,85,90,80
-Vercel,greenhouse,https://job-boards.greenhouse.io/vercel,Developer Tools,85,95,95
-Brevo,lever,https://jobs.lever.co/brevo,SaaS,80,85,60
-InnoGames,lever,https://jobs.eu.lever.co/innogames,Gaming,80,85,60
-Mendix,lever,https://jobs.lever.co/mendix,SaaS,80,85,60
-Jobandtalent,lever,https://jobs.lever.co/jobandtalent/,HR Tech,70,80,55
-Moss,personio,https://moss.jobs.personio.de,Fintech,80,85,60
-QuantumDiam,personio,https://quantum-diamond.jobs.personio.de/,Quantum Tech,70,80,40
-Ohpen,personio,https://ohpen.jobs.personio.com/?language=en,Banking SaaS,75,85,55
-Bonial,recruitee,https://bonial.recruitee.com/,Retail Media,75,80,45
-Delivery Hero,smartrecruiters,https://careers.smartrecruiters.com/DeliveryHero,Food Tech,80,85,55
-SmartRecruiters,smartrecruiters,https://www.smartrecruiterscareers.com/jobs,HR Tech,75,90,65
-Nexthink,smartrecruiters,https://careers.smartrecruiters.com/nexthink,SaaS,80,85,65
-Avomind,workable,https://apply.workable.com/avomind/,Recruitment,70,80,35
-Autodesk,workday,https://autodesk.wd1.myworkdayjobs.com/Ext,Software,80,85,60
-Zalando,workday,https://zalando.wd3.myworkdayjobs.com/ZalandoSiteWD,E-Commerce,80,80,55
-Zendesk,workday,https://zendesk.wd1.myworkdayjobs.com/zendesk,SaaS,80,85,65
-NXP Semiconductors,workday,https://nxp.wd3.myworkdayjobs.com/careers,Semiconductors,80,85,55
-Philips,workday,https://philips.wd3.myworkdayjobs.com/jobs-and-careers,Engineering,80,80,55
-simcorp,workday,https://simcorp.wd3.myworkdayjobs.com/SimCorp_Jobs,Fintech/Software,75,80,55
-Prysmian Group,workday,https://prysmiangroup.wd3.myworkdayjobs.com/Careers,Manufacturing,40,70,60
-Leonardo,workday,https://leonardocompany.wd3.myworkdayjobs.com/LeonardoCareerSite,Aerospace/Defense,25,65,50
+name,careers_url,provider,board_slug,source_type,target_country,scope_policy,industry,sponsorship_history,english_friendly,remote_score,notes
+Adyen,https://job-boards.greenhouse.io/adyen,greenhouse,adyen,direct_employer,Global,global,Fintech,90,95,65,
+Autodesk,https://autodesk.wd1.myworkdayjobs.com/Ext,auto,,direct_employer,Global,global,Software,80,85,60,
+Avomind,https://apply.workable.com/avomind/,workable,avomind,direct_employer,Global,global,Recruitment,70,80,35,
+Backbase,https://job-boards.greenhouse.io/workatbackbase,greenhouse,workatbackbase,direct_employer,Global,global,SaaS,80,85,60,
+BambooHR,https://job-boards.greenhouse.io/bamboohr17,greenhouse,bamboohr17,direct_employer,Global,global,HR Tech,75,90,80,
+Bol.com,https://job-boards.greenhouse.io/bolcomen,greenhouse,bolcomen,direct_employer,Global,global,E-Commerce,80,85,60,
+Bonial,https://bonial.recruitee.com/,recruitee,bonial,direct_employer,Global,global,Retail Media,75,80,45,
+Brevo,https://jobs.lever.co/brevo,lever,brevo,direct_employer,Global,global,SaaS,80,85,60,
+Cargo.one,https://jobs.ashbyhq.com/cargo-one,ashby,cargo-one,direct_employer,Global,global,Logistics Tech,85,90,95,
+Contentful,https://boards.greenhouse.io/contentful,greenhouse,contentful,direct_employer,Global,global,SaaS,85,90,75,
+Crealytics,https://crealytics.jobs.personio.de/,personio,crealytics,direct_employer,Global,global,MarTech,80,85,60,"verified 2026-09-15: API reachable, 0 open postings"
+Delivery Hero,https://careers.smartrecruiters.com/DeliveryHero,auto,,direct_employer,Global,global,Food Tech,80,85,55,
+Ecosia,https://jobs.ashbyhq.com/ecosia.org,ashby,ecosia.org,direct_employer,Global,global,Search,75,90,65,"verified 2026-09-15: API reachable, 0 open postings"
+Figma,https://www.figma.com/careers/#job-openings,greenhouse,figma,direct_employer,Global,global,Design,85,95,75,
+Improbable,https://jobs.ashbyhq.com/Improbable,ashby,Improbable,direct_employer,Global,global,Gaming/AI,80,90,65,
+Incident.io,https://jobs.ashbyhq.com/incident,ashby,incident,direct_employer,Global,global,SaaS,80,95,85,
+InnoGames,https://jobs.eu.lever.co/innogames,lever,innogames,direct_employer,Global,global,Gaming,80,85,60,EU-resident board (api.eu.lever.co)
+Jobandtalent,https://jobs.lever.co/jobandtalent/,lever,jobandtalent,direct_employer,Global,global,HR Tech,70,80,55,
+Lemon Markets,https://jobs.ashbyhq.com/lemon-markets,ashby,lemon-markets,direct_employer,Global,global,Fintech,80,85,65,
+Leonardo,https://leonardocompany.wd3.myworkdayjobs.com/LeonardoCareerSite,auto,,direct_employer,Global,global,Aerospace/Defense,25,65,50,
+Linear,https://jobs.ashbyhq.com/Linear,ashby,Linear,direct_employer,Global,global,Developer Tools,80,95,85,
+Luno,https://job-boards.greenhouse.io/luno,greenhouse,luno,direct_employer,Global,global,Crypto,80,90,70,
+Mapbox,https://jobs.ashbyhq.com/mapbox,ashby,mapbox,direct_employer,Global,global,GeoTech,80,90,75,
+Mendix,https://jobs.lever.co/mendix,lever,mendix,direct_employer,Global,global,SaaS,80,85,60,
+Mentimeter,https://job-boards.eu.greenhouse.io/mentimeter,greenhouse,mentimeter,direct_employer,Global,global,EdTech,75,90,70,
+Mixpanel,https://job-boards.greenhouse.io/mixpanel,greenhouse,mixpanel,direct_employer,Global,global,Analytics,80,90,80,
+Monzo,https://job-boards.greenhouse.io/monzo,greenhouse,monzo,direct_employer,Global,global,Fintech,90,95,70,
+Moss,https://moss.jobs.personio.de,personio,moss,direct_employer,Global,global,Fintech,80,85,60,"verified 2026-09-15: API reachable, 0 open postings"
+Netlify,https://job-boards.greenhouse.io/netlify,greenhouse,netlify,direct_employer,Global,global,Developer Tools,85,95,90,
+Nexthink,https://careers.smartrecruiters.com/nexthink,auto,,direct_employer,Global,global,SaaS,80,85,65,
+NXP Semiconductors,https://nxp.wd3.myworkdayjobs.com/careers,auto,,direct_employer,Global,global,Semiconductors,80,85,55,
+Ohpen,https://ohpen.jobs.personio.com/?language=en,personio,ohpen,direct_employer,Global,global,Banking SaaS,75,85,55,
+Philips,https://philips.wd3.myworkdayjobs.com/jobs-and-careers,auto,,direct_employer,Global,global,Engineering,80,80,55,
+Pleo,https://jobs.ashbyhq.com/pleo/,ashby,pleo,direct_employer,Global,global,Fintech,80,90,75,
+Prysmian Group,https://prysmiangroup.wd3.myworkdayjobs.com/Careers,auto,,direct_employer,Global,global,Manufacturing,40,70,60,
+QuantumDiam,https://quantum-diamond.jobs.personio.de/,personio,quantum-diamond,direct_employer,Global,global,Quantum Tech,70,80,40,
+Raisin,https://boards.greenhouse.io/raisin,greenhouse,raisin,direct_employer,Global,global,Fintech,80,85,60,
+Sentry,https://jobs.ashbyhq.com/sentry,ashby,sentry,direct_employer,Global,global,Developer Tools,80,95,85,
+simcorp,https://simcorp.wd3.myworkdayjobs.com/SimCorp_Jobs,auto,,direct_employer,Global,global,Fintech/Software,75,80,55,
+SmartRecruiters,https://www.smartrecruiterscareers.com/jobs,auto,,direct_employer,Global,global,HR Tech,75,90,65,
+Twilio,https://job-boards.greenhouse.io/twilio,greenhouse,twilio,direct_employer,Global,global,SaaS,85,90,80,
+Typeform,https://job-boards.greenhouse.io/typeform,greenhouse,typeform,direct_employer,Global,global,SaaS,85,95,80,
+Vercel,https://job-boards.greenhouse.io/vercel,greenhouse,vercel,direct_employer,Global,global,Developer Tools,85,95,95,
+Wolt,https://boards.greenhouse.io/wolt,greenhouse,wolt,direct_employer,Global,global,Delivery,80,85,55,
+Zalando,https://zalando.wd3.myworkdayjobs.com/ZalandoSiteWD,auto,,direct_employer,Global,global,E-Commerce,80,80,55,
+Zendesk,https://zendesk.wd1.myworkdayjobs.com/zendesk,auto,,direct_employer,Global,global,SaaS,80,85,65,

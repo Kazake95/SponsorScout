@@ -10,10 +10,12 @@ copies.  This keeps a packaged build read-only and lets users add companies.
 Both scanners read the v6-style simple schema:
     name, ats_type, careers_url, industry, sponsorship_history,
     english_friendly, remote_score
-and the career scanner additionally understands the v7 optional columns
+and both additionally understand the v7 optional columns
     seed_name, canonical_name, source_type, target_country, scope_policy,
     provider, board_slug, notes
-which are preserved when present.
+which are preserved when present.  Under v7 a row may omit ``ats_type`` and
+carry ``provider`` instead (``auto`` = resolve from the URL); the ATS scanner
+applies the same resolution before dispatching to its adapters.
 """
 from __future__ import annotations
 
@@ -35,8 +37,8 @@ EXTRA_COLUMNS = [
 ]
 
 SUPPORTED_ATS_TYPES = (
-    "official_careers", "ashby", "greenhouse", "lever", "smartrecruiters",
-    "personio", "recruitee", "workable", "workday",
+    "official_careers", "auto", "ashby", "greenhouse", "lever",
+    "smartrecruiters", "personio", "recruitee", "workable", "workday",
 )
 
 SCOPE_POLICIES = ("global", "seed_url", "job_location")
@@ -155,7 +157,9 @@ def validate_row(row: dict) -> List[str]:
     """
     errors: List[str] = []
     name = (row.get("name") or "").strip()
-    ats_type = (row.get("ats_type") or "").strip().lower()
+    # v7 rows may carry ``provider`` instead of ``ats_type`` ("auto" = the
+    # scanner resolves the provider from the careers URL).
+    ats_type = (row.get("ats_type") or row.get("provider") or "").strip().lower()
     url = (row.get("careers_url") or "").strip()
     scope = (row.get("scope_policy") or "").strip().lower()
     source_type = (row.get("source_type") or "").strip().lower()
@@ -163,7 +167,7 @@ def validate_row(row: dict) -> List[str]:
     if not name:
         errors.append("name is required")
     if not ats_type:
-        errors.append("ats_type is required")
+        errors.append("ats_type (or provider) is required")
     elif ats_type not in SUPPORTED_ATS_TYPES:
         errors.append(f"ats_type must be one of: {', '.join(SUPPORTED_ATS_TYPES)}")
     if not url:

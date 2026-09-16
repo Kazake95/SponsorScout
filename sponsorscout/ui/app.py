@@ -74,6 +74,41 @@ class SponsorScoutApp(QMainWindow):
         self._refresh_all()
         QTimer.singleShot(500, self._check_first_run)
 
+        # While a scan is in flight the DB is being written to incrementally
+        # (commit after every row / every 500 rows).  Poll the coordinator so
+        # the Dashboard shows freshly ingested jobs without waiting for the
+        # scan to fully finish.  2-second interval is a balance between
+        # freshness and not flooding the GUI thread / DB on slower
+        # machines (8 GB, 2-core).
+        self._scan_refresh_timer = QTimer(self)
+        self._scan_refresh_timer.setInterval(2000)
+        self._scan_refresh_timer.timeout.connect(self._on_scan_refresh_tick)
+        # Arm the live-refresh loop immediately; _on_scan_refresh_tick checks
+        # is_running() so the timer is harmless when no scan is in flight.
+        self._scan_refresh_timer.start()
+
+    # ── Scan-live refresh ─────────────────────────────────────────────────────
+    def _on_scan_refresh_tick(self):
+        """Light-weight periodic refresh while the background scan is alive.
+
+        Only the cheap Dashboard COUNT queries run here.  A full
+        ``_refresh_all()`` would also rebuild the Search results table, the
+        Applications table and the Tools runs table from scratch every 2
+        seconds — thousands of QTableWidgetItem allocations that visibly stall
+        a 2-core / 8 GB machine mid-scan.  Every view still receives the
+        complete, freshly-ingested data once the scan ends via
+        ``_on_scan_finished``.
+        """
+        try:
+            if (self.tools_tab is not None
+                    and self.tools_tab.coordinator is not None
+                    and self.tools_tab.coordinator.is_running()):
+                self.dashboard_tab.refresh()
+        except Exception:  # noqa: BLE001 - never let the timer thread die silently
+            logger.exception("Scan-live-refresh tick failed")
+
+    # ── Header ────────────────────────────────────────────────────────────────
+
     # ── Header ──────────────────────────────────────────────────────────────
     def _build_header(self) -> QFrame:
         header = QFrame()
@@ -189,6 +224,13 @@ class SponsorScoutApp(QMainWindow):
         self.tools_tab.refresh()
 
     def _on_scan_finished(self, summary: dict):
+        # Stop the live-refresh loop: the scan is no longer in flight.
+        if self._scan_refresh_timer.isActive():
+            self._scan_refresh_timer.stop()
+        # Refresh every view so the freshly ingested jobs and updated KPIs are
+        # visible immediately — the previous version only updated the status bar,
+        # leaving the Dashboard and Search tab showing stale data after a scan.
+        self._refresh_all()
         status = summary.get("status", "error")
         if summary.get("cancelled"):
             self._set_status(_("Scan stopped."))
@@ -198,9 +240,8 @@ class SponsorScoutApp(QMainWindow):
                 _("{n} jobs ingested").format(n=summary.get("ingested", 0)))
 
     def _rescan_from_dashboard(self):
-        """Dashboard 'Rescan Companies' → Tools quick scan."""
+        """Dashboard 'Rescan Companies' → Tools scan (single scan mode)."""
         self.tabs.setCurrentWidget(self.tools_tab)
-        self.tools_tab.method_combo.setCurrentIndex(0)  # quick
         self.tools_tab.start_scan()
 
     def _set_status(self, msg: str):

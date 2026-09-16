@@ -384,7 +384,9 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Unknown": "Unknown",
 
         # ── Tools descriptions ────────────────────────────────────────
-        "Scanner description": "Start a job scan across all seeded companies — Quick (fast, API-only) or Full (browser crawl). Live output appears below.",
+        "Scanner description": "Start a job scan across all seeded companies — every ATS board and career page is crawled, then each job is enriched from its detail page. Live output appears below.",
+        "Scan every seeded company (ATS boards + career pages) and enrich each job from its detail page, so no listing misses its evidence.":
+            "Scan every seeded company (ATS boards + career pages) and enrich each job from its detail page, so no listing misses its evidence.",
         "Scan History description": "Every past scan run. Select a row to view or download its per-company log with errors.",
         "Data Quality description": "Remove duplicate jobs/companies, clear expired (stale) jobs, or wipe all scanned data.",
         "Freshness Check description": "Re-verify saved jobs against their live pages and mark expired listings.",
@@ -750,9 +752,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
 
         # ── Tools tab extras ─────────────────────────────────────────
         "Scan History": "Storico Scansioni",
-        "Method": "Metodo",
-        "Quick (API-first)": "Veloce (API prima)",
-        "Full (browser crawl)": "Completo (ricerca browser)",
         "Idle": "Inattivo",
         "Running...": "In esecuzione...",
         "Scan output appears here...": "L'output della scansione appare qui...",
@@ -770,7 +769,9 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Unknown": "Sconosciuto",
 
         # ── Tools descriptions ────────────────────────────────────────
-        "Scanner description": "Avvia una scansione lavori su tutte le aziende seminate — Veloce (veloce, solo API) o Completo (ricerca browser). L'output live appare qui sotto.",
+        "Scanner description": "Avvia una scansione lavori su tutte le aziende seminate — ogni board ATS e pagina carriere viene scansionata, poi ogni lavoro viene arricchito dalla sua pagina di dettaglio. L'output live appare qui sotto.",
+        "Scan every seeded company (ATS boards + career pages) and enrich each job from its detail page, so no listing misses its evidence.":
+            "Scansiona ogni azienda seminata (board ATS + pagine carriere) e arricchisce ogni lavoro dalla sua pagina di dettaglio, così nessun annuncio resta senza evidenza.",
         "Scan History description": "Ogni scansione passata. Seleziona una riga per visualizzare o scaricare il suo registro per azienda con errori.",
         "Data Quality description": "Rimuovi lavori/aziende duplicati, cancella lavori scaduti (obsoleti) o elimina tutti i dati scansionati.",
         "Freshness Check description": "Riverifica i lavori salvati rispetto alle loro pagine live e segna le scadute.",

@@ -37,9 +37,9 @@ try:
 except ModuleNotFoundError:
     sync_playwright = None
 
-# Real-time logging. When a progress callback is installed (desktop app) all
-# output lines are routed to it; otherwise they print to stdout as before.
-# The original script's module-level logging.basicConfig() side effect is removed.
+# Real-time logging.  When a progress callback is installed (desktop app) all
+# output lines are routed to it (and therefore into the Tools tab scan log);
+# otherwise they print to stdout as before.
 import builtins as _builtins
 
 progress_cb = None
@@ -55,8 +55,54 @@ def _notify(msg):
 def print(*args, **kwargs):
     _notify(" ".join(str(a) for a in args))
 
+
+def _log_file_path() -> str:
+    """Where to write the scanner's diagnostic log.
+
+    Never the current working directory: a packaged Windows build is installed
+    under Program Files, which is not writable — the previous hard-coded
+    ``ats_scraper_errors.log`` relative path made ``logging.basicConfig`` fail
+    (or silently write a stray file next to the seed CSVs).  The per-user scan
+    output directory is always writable, and keeps the diagnostic log next to
+    the run artifacts it describes.
+    """
+    try:
+        from sponsorscout import paths
+
+        return str(paths.ensure_scan_output_dir() / "ats_scraper_errors.log")
+    except Exception:  # standalone single-file mode
+        return "ats_scraper_errors.log"
+
+
+logging.basicConfig(
+    filename=_log_file_path(),
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
 # ───────────────────────── CONFIG ─────────────────────────────────────────────
-from sponsorscout.scanning.common import OUTPUT_FIELDS, LOG_FIELDS
+OUTPUT_FIELDS = [
+    "Company Name", "Seed Name", "Source Type", "Hiring Company",
+    "Target Country", "Scope Policy", "Industry Type",
+    "Sponsorship History Score", "English Friendly Score", "Remote Score",
+    "Job Title", "Raw Job Title", "Job Location", "Raw Location", "Job Type",
+    "Job URL", "Canonical Job ID", "Provider", "Extraction Method",
+    "EU Blue Card", "Blue Card Evidence", "Relocation/Visa Support",
+    "Location Source", "URL Type", "Visa Sponsorship", "Relocation Support",
+    "Relocation Required", "Support Confidence", "Support Evidence",
+    "Support Evidence URL", "Support Evidence Type", "Record Status",
+    "Quarantine Reason", "Run ID", "Scanned At",
+]
+
+LOG_FIELDS = [
+    "Run ID", "Seed Name", "Company", "Source Type", "Target Country", "Status",
+    "Provider", "Jobs Found", "Quarantined", "Duplicates", "Rejected Scope",
+    "Error", "Diagnostics", "Duration Sec", "Seed URL",
+]
+
+ERROR_FIELDS = [
+    "Run ID", "Timestamp", "Seed Name", "Phase", "Error Type", "Message", "Seed URL",
+]
 
 BAD_HOSTS = {
     "bcorporation.net", "glassdoor.com", "indeed.com", "linkedin.com",
@@ -68,6 +114,29 @@ BAD_TITLES = {
     "create alert", "skip to main content", "open positions", "working at",
     "here", "report", "b corporation",
 }
+
+
+# Batch L (universal FP fix): role nouns that prove a title is a real job.
+# Policy/banner phrases ("data protection", "equal opportunity", ...) also
+# occur in genuine titles ("Data Protection Officer"), so those phrases only
+# reject when NO role noun is present. Banners never contain one.
+_ROLE_NOUNS_RE = re.compile(
+    r"\b(manager|officer|engineer|specialist|analyst|lead|leader|head|chief|"
+    r"director|consultant|counsel|advisor|adviser|architect|developer|"
+    r"designer|scientist|associate|assistant|coordinator|administrator|"
+    r"supervisor|strategist|partner|auditor|lawyer|attorney|solicitor|"
+    r"paralegal|clerk|technician|technologist|operator|mechanic|electrician|"
+    r"nurse|physician|doctor|surgeon|teacher|professor|lecturer|researcher|"
+    r"writer|editor|accountant|recruiter|buyer|planner|driver|chef|"
+    r"receptionist|secretary|intern|trainee|apprentice|agent|broker|trader|"
+    r"banker|representative|executive|president|founder|owner)s?\b",
+    re.IGNORECASE,
+)
+
+
+def _has_role_noun(title: str) -> bool:
+    """True when the title names a job-holder role (real job signal)."""
+    return bool(_ROLE_NOUNS_RE.search(title or ""))
 
 # Network resilience (v5)
 PREFLIGHT_PROBE_HOSTS = (
@@ -100,37 +169,94 @@ SEED_UPGRADE = {
 # ATS types whose public list API is known to currently return 0/404 — surfaced
 # in the scan log diagnostics rather than silently reported as healthy.
 KNOWN_BOARD_ISSUES = {
-    "Ecosia": "Ashby board 'ecosia.org' currently returns 0 jobs (board may have moved)",
+    "Ecosia": "Ashby board 'ecosia.org' currently returns 0 jobs (genuine hiring freeze; board verified live 2026-09-11)",
     "Dbt Labs": "Greenhouse board 'dbtlabsinc' returns 404 (board taken private)",
     "Crealytics": "Personio board currently returns 0 positions",
     "Moss": "Personio board currently returns 0 positions",
 }
 
 # ───────────────────────── SHARED HELPERS ────────────────────────────────────
-from sponsorscout.scanning.common import clean, host_of
-from sponsorscout.scanning.jd_support import (
-    JDSupportDetector,
-    VERDICT_YES,
-    VERDICT_NO,
-    VERDICT_UNKNOWN,
-)
+def clean(value):
+    value = unescape(str(value or ""))
+    value = value.replace("ï»¿", "")
+    value = value.replace("\ufeff", "")
+    match = re.fullmatch(
+        r"\[[^\]]*\]\((https?://[^)]+)\)",
+        value.strip(),
+    )
+    if match:
+        value = match.group(1)
+    if any(x in value for x in ("Ã", "Â", "â", "ð", "\ufffd")):
+        try:
+            value = value.encode("latin1").decode("utf-8")
+        except (UnicodeError, UnicodeEncodeError):
+            pass
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def host_of(url):
+    return urlparse(url).netloc.lower().split(":")[0]
+
+
+# ───────────────────────── JD SUPPORT DETECTOR ────────────────────────────────
+# (imported verbatim from career_portal_scanner_v7.py — keep in sync)
+# ───────────────────── JD SUPPORT DETECTOR ─────────────────────
+# Context-aware detection of Visa Sponsorship / Relocation Support in JD text.
+# Never matches keywords alone: every mention is judged within its sentence/
+# clause, with negation / requirement / conditional / scope qualifiers.
+#   "We do NOT support relocation"              -> No      (negated)
+#   "We support if you are READY to relocate"   -> No      (candidate must move)
+#   "may be provided case-by-case"              -> Unknown (conditional)
+# Single source of truth: ``sponsorscout.scanning.jd_support`` (shared with the
+# career scanner).  The former in-file copy of this class was verified
+# byte-identical and removed so the two scanners can never drift apart —
+# changing visa/relocation detection is now a one-file edit.
+#
+# Dual-mode bootstrap: allow ``python ats_scanner.py`` to run as a loose script
+# from the repo, where the package root is not on sys.path yet.
+try:
+    from sponsorscout.scanning.jd_support import (
+        JDSupportDetector,
+        VERDICT_NO,
+        VERDICT_UNKNOWN,
+        VERDICT_YES,
+        detect_blue_card,
+    )
+except ModuleNotFoundError:  # standalone single-file mode
+    import os as _os
+    import sys as _sys
+
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    for _i in range(3):  # ats/ -> scanning/ -> sponsorscout/ -> repo root
+        _here = _os.path.dirname(_here)
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
+    from sponsorscout.scanning.jd_support import (
+        JDSupportDetector,
+        VERDICT_NO,
+        VERDICT_UNKNOWN,
+        VERDICT_YES,
+        detect_blue_card,
+    )
 
 
 class ATSScanner:
     def __init__(self, seed_file="company_ATS_seed.csv",
                  output_file="scraped_ats_jobs_v5.csv",
-                 skip_preflight=False, resume=False, cancel_event=None,
-                 only_companies=None):
+                 skip_preflight=False, resume=False,
+                 cancel_event=None, only_companies=None):
         self.seed_file = seed_file
         self.output_file = output_file
         self.skip_preflight = skip_preflight
         self.resume = resume
         # Cooperative cancellation for the desktop UI Stop button: checked
-        # between targets in run(); never interrupts an in-flight request.
+        # before each target; the in-flight target is allowed to finish.
         self.cancel_event = cancel_event
-        # Optional whitelist of company names (CLI --company): when set, only
-        # these targets are scanned.
+        # Optional whitelist of company names (Dashboard "Rescan Companies"):
+        # when set, only those targets are scanned.
         self.only_companies = only_companies
+        # Set by run(); the per-run errors artifact path.
+        self._errors_csv = None
         self.run_id = time.strftime("%Y%m%dT%H%M%S")
         self.detector = JDSupportDetector()
 
@@ -224,15 +350,40 @@ class ATSScanner:
             reader.fieldnames = [clean(x) for x in (reader.fieldnames or [])]
             for line_no, row in enumerate(reader, 2):
                 name = clean(row.get("name"))
-                ats_type = clean(row.get("ats_type")).lower()
+                # Schema support: the legacy v6 seed carries ``ats_type``
+                # directly; the v7 seed (shared with the career scanner)
+                # carries ``provider`` (+ optional ``board_slug``).  Accept
+                # both, and resolve ``auto`` / blank providers from the URL.
+                ats_type = (clean(row.get("ats_type"))
+                            or clean(row.get("provider"))).lower()
                 industry = clean(row.get("industry") or "Tech")
                 url = clean(row.get("careers_url"))
-                if not name or not ats_type or not url:
-                    errors.append(f"line {line_no}: missing name/ats_type/careers_url")
+                if not name or not url:
+                    errors.append(f"line {line_no}: missing name/careers_url")
                     continue
                 if not url.startswith(("http://", "https://")):
                     errors.append(f"line {line_no} {name}: invalid URL {url!r}")
                     continue
+                unresolved_auto = False
+                if not ats_type or ats_type == "auto":
+                    sniffed = self._sniff_ats_type(url)
+                    if sniffed:
+                        ats_type = sniffed
+                    else:
+                        # Plain careers site with no ATS signature: keep the
+                        # row (ats_type stays "auto") so scan_target() routes
+                        # it to the browser DOM fallback.  A company is never
+                        # dropped just because its ATS cannot be identified.
+                        ats_type = "auto"
+                        unresolved_auto = True
+                if not ats_type:
+                    errors.append(
+                        f"line {line_no} {name}: no ats_type/provider and the "
+                        f"URL matches no known ATS: {url!r}")
+                    continue
+                if unresolved_auto:
+                    print(f"   [seed] {name}: no API adapter for {url!r} — "
+                          f"the browser DOM fallback will be used")
                 # v6 → v5 upgrade
                 upg = SEED_UPGRADE.get(name)
                 if upg:
@@ -242,7 +393,9 @@ class ATSScanner:
                             changed.append(f"{k} -> {upg[k]}")
                     if changed:
                         print(f"   [upgrade] {name}: " + "; ".join(changed))
-                source_type = (upg or {}).get("source_type") or "direct_employer"
+                source_type = ((upg or {}).get("source_type")
+                               or clean(row.get("source_type"))
+                               or "direct_employer")
                 lever_region = (upg or {}).get("lever_region") or ""
                 key = (name.casefold(), ats_type, url.casefold())
                 if key in seen_keys:
@@ -259,11 +412,42 @@ class ATSScanner:
                 records.append({
                     "name": name, "ats_type": ats_type, "url": url,
                     "industry": industry, "source_type": source_type,
-                    "lever_region": lever_region, **scores,
+                    "lever_region": lever_region,
+                    # v7 columns (defaulted so v6 seeds behave exactly as before)
+                    "target_country": clean(row.get("target_country")) or "Global",
+                    "scope_policy": (clean(row.get("scope_policy"))
+                                     or "global").lower(),
+                    "board_slug": clean(row.get("board_slug")),
+                    "notes": clean(row.get("notes")),
+                    **scores,
                 })
         if errors:
             raise ValueError("Seed validation failed:\n - " + "\n - ".join(errors))
         return records
+
+    # URL fingerprints for the 8 adapters this scanner implements.  Mirrors
+    # ``core.ats_detection`` (plus the SmartRecruiters legacy hosts) so a v7
+    # seed row with ``provider=auto`` still resolves; kept local so the
+    # standalone single-file mode needs no app imports.
+    _ATS_URL_FINGERPRINTS = (
+        (re.compile(r"(?:boards|job-boards)\.greenhouse\.io", re.I), "greenhouse"),
+        (re.compile(r"(?:jobs|careers|api)\.lever\.co", re.I), "lever"),
+        (re.compile(r"jobs\.ashbyhq\.com", re.I), "ashby"),
+        (re.compile(r"apply\.workable\.com", re.I), "workable"),
+        (re.compile(r"([a-z0-9_-]+\.)+(jobs\.)?personio\.(com|de)", re.I), "personio"),
+        (re.compile(r"([a-z0-9_-]+\.)+myworkdayjobs\.com", re.I), "workday"),
+        (re.compile(r"(?:jobs|careers)\.smartrecruiters\.com|smartrecruiterscareers\.com", re.I),
+         "smartrecruiters"),
+        (re.compile(r"([a-z0-9_-]+\.)+recruitee\.com", re.I), "recruitee"),
+    )
+
+    @classmethod
+    def _sniff_ats_type(cls, url: str) -> str:
+        """Resolve provider=auto / blank from the careers URL. '' = unknown."""
+        for pattern, ats_type in cls._ATS_URL_FINGERPRINTS:
+            if pattern.search(url or ""):
+                return ats_type
+        return ""
 
     # ── Normalization ────────────────────────────────────────────────────────
     @staticmethod
@@ -475,18 +659,10 @@ class ATSScanner:
             self.detector.best_evidence(sup["visa"]),
             self.detector.best_evidence(sup["relocation"]),
         ]))
-        # Blue card is independent of general visa sponsorship.
-        blue = "Unknown"
-        for sent in self.detector.split_sentences(text):
-            if re.search(
-                r"\b(?:eu\s+)?blue[- ]?card|blaue karte|carta blu|blauwe kaart|carte bleue|tarjeta azul\b",
-                sent, re.I,
-            ):
-                if self.detector.NEGATION.search(sent):
-                    blue = "N"
-                elif self.detector.POSITIVE_VERBS.search(sent):
-                    blue = "Y"
-                break
+        # Blue card is independent of general visa sponsorship.  Uses the same
+        # shared classifier as the career scanner (jd_support.detect_blue_card)
+        # so both scanners cannot disagree on the same JD text.
+        blue = detect_blue_card(self.detector, text)
         flag = "Unknown"
         if visa == VERDICT_YES or reloc == VERDICT_YES:
             flag = "Y"
@@ -501,6 +677,7 @@ class ATSScanner:
         for pattern in (
             r"(?i)(?:jobid|job_id|gh_jid|reqid|requisitionid|career_job_req_id|postingid|r)=([A-Za-z]*\d{4,})",
             r"(?i)(?:^|[/_-])(R\d{5,})(?:[-_/?]|$)",
+            r"(?i)[/_-](?:JR|REQ)[-_]?(\d{4,})(?:[-_/?#]|$)",
             r"(?i)/jobs?/(\d{5,})(?:/|$)",
             r"(?i)/([0-9a-f]{8}-[0-9a-f-]{27,})(?:/|$)",
             r"(?i)/(\d{5,})(?:/?(?:[?#]|$))",
@@ -512,7 +689,9 @@ class ATSScanner:
             identity = p.netloc.casefold().removeprefix("www.") + p.path.rstrip("/").casefold()
         if not identity and title:
             identity = f"title:{self._norm(title)}|loc:{self._norm(location)}"
-        return f"{company.casefold()}|{provider.casefold()}|{identity}"
+        # G3 fix: provider must not fragment identity — the same job seen via
+        # two ATS boards (or API vs browser fallback) is the same job.
+        return f"{company.casefold()}|{identity}"
 
     def valid_job_url(self, url):
         if not url or not url.startswith(("http://", "https://")):
@@ -542,10 +721,63 @@ class ATSScanner:
             return False
         return True
 
+    # Compact place vocabulary for the G1 location-as-title guard below
+    # (ATS port of the career-scanner fix; API titles are structured so this
+    # mostly guards the browser_fallback DOM scrape).
+    _TITLE_PLACES = frozenset("""
+        milano milan roma rome torino turin napoli naples genova florence firenze
+        bologna palermo wetzlar giessen walldorf darmstadt berlin munich muenchen
+        münchen hamburg frankfurt stuttgart dusseldorf düsseldorf koln köln cologne
+        essen leipzig dresden nuremberg nürnberg hannover paris lyon marseille
+        london manchester birmingham leeds dublin amsterdam rotterdam eindhoven
+        utrecht brussels bruxelles zurich zürich geneva vienna wien madrid barcelona
+        lisbon lisboa porto warsaw warszawa krakow kraków prague praha budapest
+        bucharest athens stockholm oslo copenhagen helsinki york francisco austin
+        seattle boston chicago toronto vancouver atlanta dallas denver houston
+        miami phoenix portland tacoma arlington hillsboro chillicothe ballston
+        florham yixing westlake wetherill suzhou shanghai beijing shenzhen tokyo
+        yokohama osaka kyoto singapore bangalore bengaluru hyderabad chennai mumbai
+        delhi pune johor bahru sydney melbourne germany deutschland italy italia
+        france spain espana españa netherlands nederland belgium schweiz switzerland
+        austria ireland england scotland wales poland portugal sweden norway denmark
+        finland greece hungary romania czechia china japan india australia canada
+        mexico brazil texas california florida washington ontario bayern bavaria
+        hessen baden-württemberg baden-wurttemberg nordrhein-westfalen europe eu emea
+        apac dach nordics benelux balkans latam mena global worldwide
+        """.split())
+
+    def _title_is_pure_location(self, title: str) -> bool:
+        """True when a title is only place/code/postal segments ("Milano, MI").
+
+        Every comma segment must be a known place, a 2-3 letter code, or a
+        postal code — anything else (e.g. "Sales, UK", "Nurse, Berlin") is
+        kept as a title so real jobs are never quarantined by this check.
+        """
+        segs = [s.strip() for s in title.split(",")]
+        if len(segs) < 2:
+            return False
+        saw_place = False
+        for s in segs:
+            if not s:
+                continue
+            w = s.lower()
+            if re.fullmatch(r"[a-z]{2,3}", w) or re.fullmatch(r"[\d\s\-]*\d[\d\s\-]*", w):
+                continue  # state/country code or postal code
+            words = w.split()
+            if words and all(x in self._TITLE_PLACES for x in words):
+                saw_place = True
+                continue
+            return False
+        return saw_place
+
     def valid_title(self, title):
         title = clean(title)
         low = title.lower()
         if not title or len(title) > 180:
+            return False
+        # G1 fix: location stubs used as titles ("Milano, MI", "Wetzlar, DE").
+        # make_row() quarantines invalid titles with a clear reason.
+        if self._title_is_pure_location(title):
             return False
         # allow short CJK titles (e.g. 2-char "电工" = electrician); Latin titles
         # under 3 chars ("IT", "HR", "QA") are never real job titles
@@ -555,14 +787,23 @@ class ATSScanner:
         if low in BAD_TITLES:
             return False
         rejected = (
-            "sorry, internet explorer", "privacy policy", "cookie policy",
-            "terms of service", "skip to main", "looking for a job",
-            "equal opportunity", "data protection", "talent community",
-            "talent pool", "candidate database", "career day",
-            "save for later", "show job", "learn more",
+            "sorry, internet explorer", "skip to main", "looking for a job",
+            "talent community", "talent pool", "candidate database",
+            "career day", "save for later", "show job", "learn more",
             "read more", "view job", "view role",
         )
         if any(x in low for x in rejected):
+            return False
+        # Batch L: policy phrases are conditional — real jobs contain them
+        # ("Data Protection Officer", "Equal Opportunity Specialist"), while
+        # banners ("Privacy Policy", "Equal Opportunity Employer") carry no
+        # role noun. Pool phrases above stay unconditional on purpose:
+        # "Engineering Talent Pool" names a pool, not a job.
+        policy_phrases = (
+            "privacy policy", "cookie policy", "terms of service",
+            "equal opportunity", "data protection",
+        )
+        if any(p in low for p in policy_phrases) and not _has_role_noun(low):
             return False
         # Bare generic level/function words are not real titles — EXCEPT the
         # complete entry-level titles below, which are legitimate on their own
@@ -591,8 +832,8 @@ class ATSScanner:
             "Seed Name": target["name"],
             "Source Type": target["source_type"],
             "Hiring Company": (target["name"] if target["source_type"] == "direct_employer" else "Unknown"),
-            "Target Country": "Global",
-            "Scope Policy": "global",
+            "Target Country": target.get("target_country", "Global"),
+            "Scope Policy": target.get("scope_policy", "global"),
             "Industry Type": target["industry"],
             "Sponsorship History Score": target.get("sponsorship_history", ""),
             "English Friendly Score": target.get("english_friendly", ""),
@@ -930,6 +1171,9 @@ class ATSScanner:
                 browser.close()
         except Exception as exc:
             logging.exception("Browser fallback failed for %s", target["url"])
+            self._record_error(target.get("name", "?"), "browser_fallback",
+                               type(exc).__name__, str(exc),
+                               target.get("url", ""))
             return []
         seen = set()
         for job in jobs:
@@ -961,9 +1205,31 @@ class ATSScanner:
         }
         adapter = adapters.get(target["ats_type"])
         if adapter is None:
-            logging.warning("Unsupported ATS type: %s", target["ats_type"])
-            return []
+            # Generic / unknown board (e.g. provider=auto on a plain careers
+            # site with no ATS signature): the DOM fallback still harvests
+            # visible job links instead of silently returning 0 and losing
+            # that company's jobs.
+            print(f"   no API adapter for '{target['ats_type']}' "
+                  f"— using browser DOM fallback")
+            return self.browser_fallback(target)
         return adapter(target)
+
+    def _record_error(self, seed_name, phase, err_type, message, seed_url=""):
+        """Append one row to the run's errors CSV (immediate, crash-safe)."""
+        path = getattr(self, "_errors_csv", None)
+        if not path:
+            return
+        try:
+            with open(path, "a", encoding="utf-8", newline="") as f:
+                csv.DictWriter(f, fieldnames=ERROR_FIELDS).writerow({
+                    "Run ID": self.run_id,
+                    "Timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "Seed Name": seed_name, "Phase": phase,
+                    "Error Type": err_type, "Message": (message or "")[:2000],
+                    "Seed URL": seed_url,
+                })
+        except Exception:
+            pass  # error logging must never crash a scan
 
     def _ensure_output_header(self, columns, path):
         """Write the header if the file is missing/empty; otherwise verify the
@@ -984,18 +1250,26 @@ class ATSScanner:
     def run(self):
         import os
         targets = self.read_seed_file()
+        # Optional whitelist (Dashboard "Rescan Companies"): keep only the
+        # requested companies so a targeted rescan stays fast.  Same semantics
+        # as the career scanner's only_companies handling.
         if self.only_companies:
             wanted = {c.strip().lower() for c in self.only_companies if c and c.strip()}
-            targets = [t for t in targets if t.get("name", "").strip().lower() in wanted]
+            targets = [t for t in targets if str(t.get("name", "")).strip().lower() in wanted]
             if not targets:
                 print(f"no ATS targets matched only_companies={self.only_companies}")
                 return
+        if not targets:
+            print("ATS scan: seed file contains no enabled targets")
+            return
         self._preflight_connectivity()
 
         base = self.output_file[:-4] if self.output_file.lower().endswith(".csv") else self.output_file
         recruiter_csv = base + "_recruiter.csv"
         quarantine_csv = base + "_quarantine.csv"
         scan_log_csv = base + "_scan_log.csv"
+        errors_csv = base + "_errors.csv"
+        self._errors_csv = errors_csv
 
         # Fresh run: truncate + write headers. Resume: load existing canonical
         # IDs so only NEW requisitions are appended, and verify (or write) the
@@ -1006,11 +1280,14 @@ class ATSScanner:
                     csv.DictWriter(f, fieldnames=OUTPUT_FIELDS).writeheader()
             with open(scan_log_csv, "w", encoding="utf-8", newline="") as f:
                 csv.DictWriter(f, fieldnames=LOG_FIELDS).writeheader()
+            with open(errors_csv, "w", encoding="utf-8", newline="") as f:
+                csv.DictWriter(f, fieldnames=ERROR_FIELDS).writeheader()
             seen_ids = set()
         else:
             for path in (self.output_file, recruiter_csv, quarantine_csv):
                 self._ensure_output_header(OUTPUT_FIELDS, path)
             self._ensure_output_header(LOG_FIELDS, scan_log_csv)
+            self._ensure_output_header(ERROR_FIELDS, errors_csv)
             # Load existing canonical IDs so resume dedupes against prior runs.
             seen_ids = set()
             for path in (self.output_file, recruiter_csv):
@@ -1026,8 +1303,10 @@ class ATSScanner:
         print(f"ATS scan started: {len(targets)} targets; run_id={self.run_id}; resume={self.resume}")
 
         for idx, target in enumerate(targets, 1):
+            # Cooperative cancellation (desktop Stop button): stop between
+            # targets so an in-flight HTTP/browser request can finish cleanly.
             if self.cancel_event is not None and self.cancel_event.is_set():
-                print(f"\nCANCELLED: stopping before target [{idx}/{len(targets)}] {target['name']}")
+                print(f"   CANCELLED: stopping before target [{idx}] {target.get('name', '?')}")
                 break
             started = time.monotonic()
             print(f"\n[{idx}/{len(targets)}] {target['name']} ({target['ats_type']})")
@@ -1035,11 +1314,13 @@ class ATSScanner:
             diagnostics = []
             if target["name"] in KNOWN_BOARD_ISSUES:
                 diagnostics.append(KNOWN_BOARD_ISSUES[target["name"]])
+            err_type = err_msg = ""
             try:
                 result = self.scan_target(target)
             except Exception as exc:
                 result = []
-                error = f"{type(exc).__name__}: {exc}"
+                err_type, err_msg = type(exc).__name__, str(exc)
+                error = f"{err_type}: {err_msg}"
                 diagnostics.append(error)
             accepted = []
             quarantined = []
@@ -1068,7 +1349,7 @@ class ATSScanner:
                 csv.DictWriter(f, fieldnames=LOG_FIELDS).writerow({
                     "Run ID": self.run_id, "Seed Name": target["name"],
                     "Company": target["name"], "Source Type": target["source_type"],
-                    "Target Country": "Global", "Status": status,
+                    "Target Country": target.get("target_country", "Global"), "Status": status,
                     "Provider": target["ats_type"], "Jobs Found": len(accepted),
                     "Quarantined": len(quarantined), "Duplicates": duplicates,
                     "Rejected Scope": 0, "Error": error,
@@ -1076,7 +1357,29 @@ class ATSScanner:
                     "Duration Sec": round(time.monotonic() - started, 1),
                     "Seed URL": target["url"],
                 })
+            if error:
+                self._record_error(target["name"], "target", err_type, err_msg,
+                                   target["url"])
             print(f"   {status.upper()}: wrote={len(accepted)}, quarantined={len(quarantined)}, dups={duplicates}")
 
         print(f"\nATS scan complete. Outputs:\n  Direct: {self.output_file}\n"
-              f"  Recruiters: {recruiter_csv}\n  Quarantine: {quarantine_csv}\n  Log: {scan_log_csv}")
+              f"  Recruiters: {recruiter_csv}\n  Quarantine: {quarantine_csv}\n  Log: {scan_log_csv}\n"
+              f"  Errors: {errors_csv}")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="ATS Career Portal Scanner v5")
+    parser.add_argument("--input", default="company_ATS_seed.csv")
+    parser.add_argument("--output", default=None,
+                        help="Default: scraped_ats_jobs_v5.csv")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--skip-preflight", action="store_true")
+    args = parser.parse_args()
+    scanner = ATSScanner(
+        seed_file=args.input,
+        output_file=args.output or "scraped_ats_jobs_v5.csv",
+        skip_preflight=args.skip_preflight,
+        resume=args.resume,
+    )
+    scanner.run()

@@ -23,7 +23,9 @@ Design (locked with the project owner):
 from __future__ import annotations
 
 import csv
+import io
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -33,6 +35,7 @@ from sponsorscout import paths
 from sponsorscout.application import seed_manager
 from sponsorscout.scanning.ats import ats_scanner as ats_module
 from sponsorscout.scanning.career import career_scanner as career_module
+from sponsorscout.scanning.common import recommended_workers
 from sponsorscout.core.location_country import country_from_location
 from sponsorscout.core import persistence
 from sponsorscout.db import database as db
@@ -44,6 +47,37 @@ ProgressFn = Callable[[str], None]
 
 def _noop_progress(_msg: str) -> None:  # pragma: no cover
     pass
+
+
+def lower_process_priority() -> bool:
+    """Best-effort: run the scan below normal priority.
+
+    The scan is a long background job; on a 2-core / 8 GB machine the desktop
+    must stay responsive while it runs.  Lowering the priority lets the OS
+    scheduler favour the UI (and whatever else the user is doing) whenever the
+    two compete for CPU.  Purely an optimisation: never fatal.
+
+    * Windows: ``BELOW_NORMAL_PRIORITY_CLASS`` via kernel32.
+    * POSIX:   ``os.nice(10)`` (only when permitted).
+    """
+    try:
+        import os
+
+        if os.name == "nt":
+            import ctypes
+
+            BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetCurrentProcess()
+            return bool(kernel32.SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS))
+        try:
+            os.nice(10)
+            return True
+        except (AttributeError, OSError):
+            return False
+    except Exception:  # pragma: no cover - optimisation only
+        logger.debug("Could not lower process priority", exc_info=True)
+        return False
 
 
 # ── Score / verdict derivation ───────────────────────────────────────────────
@@ -100,9 +134,44 @@ def _norm_location(value) -> str:
     return "" if v.lower() in ("unknown", "not specified") else v
 
 
+# Canonical country names (must match location_country.py output).
+_EU_COUNTRIES = frozenset({
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czech Republic",
+    "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary",
+    "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta",
+    "Netherlands", "Poland", "Portugal", "Romania", "Slovakia", "Slovenia",
+    "Spain", "Sweden",
+})
+_EMEA_COUNTRIES = _EU_COUNTRIES | frozenset({
+    "United Kingdom", "Switzerland", "Norway", "Iceland", "Turkey", "Israel",
+    "United Arab Emirates", "Saudi Arabia", "Qatar", "Kuwait", "Bahrain",
+    "Jordan", "Lebanon", "Egypt", "Morocco", "Tunisia", "Kenya", "Nigeria",
+    "Ghana", "South Africa",
+})
+
+
 def _remote_type(row: dict) -> str:
+    """F8 fix: hybrid + EU/EMEA-aware remote mapping.
+
+    Previously this could only ever return "remote"/"onsite", which left the
+    DB/UI remote_eu / remote_emea / hybrid filters permanently empty.
+    """
     hay = f"{row.get('Job Type', '')} {row.get('Job Location', '')} {row.get('Raw Location', '')}".lower()
-    return "remote" if "remote" in hay else "onsite"
+    if "hybrid" in hay:
+        return "hybrid"
+    if "remote" not in hay:
+        return "onsite"
+    country = _job_country(row)
+    if country in _EU_COUNTRIES:
+        return "remote_eu"
+    if country in _EMEA_COUNTRIES:
+        return "remote_emea"
+    # Region word without a concrete country ("Remote - EU").
+    if re.search(r"\b(eu|e\.u\.|europe)\b", hay):
+        return "remote_eu"
+    if "emea" in hay:
+        return "remote_emea"
+    return "remote"
 
 
 def _job_country(row: dict) -> str:
@@ -111,6 +180,13 @@ def _job_country(row: dict) -> str:
     loc = _norm_location(row.get("Job Location"))
     if loc:
         country = country_from_location(loc)
+        if country:
+            return country
+    # F6 fix: fall back to Raw Location before the seed target — the raw
+    # string often holds "Kuala Lumpur, MY" when Job Location is Unknown.
+    raw_loc = _norm_location(row.get("Raw Location"))
+    if raw_loc and raw_loc != loc:
+        country = country_from_location(raw_loc)
         if country:
             return country
     target = str(row.get("Target Country") or "").strip()
@@ -182,51 +258,117 @@ def _row_to_job(row: dict, *, source_subtype: str = "direct", run_id: str) -> di
         "canonical_job_id": str(row.get("Canonical Job ID") or "").strip(),
         "run_id": run_id,
         "industry": industry,
+        "raw_location": str(row.get("Raw Location") or "").strip(),
+        "country_source": "auto",
     }
 
 
 # ── Ingestion ────────────────────────────────────────────────────────────────
 
 def _ingest_output_csv(db_path, path: Path, run_id: str, source_subtype: str,
-                       seen_canonical: set) -> tuple[int, int]:
+                       seen_canonical: set,
+                       seen_fuzzy: set | None = None,
+                       skip_box: list | None = None) -> tuple[int, int]:
     """Ingest accepted job rows from one scanner output CSV.
 
     Returns (ingested, duplicates).  Duplicates are rows whose canonical job
-    ID was already ingested in this run (mirror URLs across scanners/files).
+    ID was already ingested in this run (mirror URLs across scanners/files),
+    plus rows with an empty canonical ID whose (company, title, country)
+    fuzzy key was already seen (G3 fallback). Commits in batches of 500
+    rows instead of once per row (F11).
+
+    ``skip_box`` enables incremental tailing: pass a one-element list and the
+    reader skips the records already consumed by earlier passes, recording the
+    new record count back into it.  The live ingester uses this so a long scan
+    no longer re-parses (and re-dedupes) the whole growing CSV every few
+    seconds — that was O(n^2) work over a run and a major cause of the machine
+    becoming sluggish during scans.  A plain call (``skip_box=None``) reads the
+    file from the start, which the final bulk pass relies on for its counts.
     """
     if not path or not path.exists():
         return 0, 0
+    if seen_fuzzy is None:
+        seen_fuzzy = set()
     ingested = duplicates = 0
+    pending = 0
+    skip = int(skip_box[0]) if skip_box else 0
+    consumed = 0
     conn = db.get_connection(db_path)
     try:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            for row in csv.DictReader(f):
-                cid = str(row.get("Canonical Job ID") or "").strip()
-                if cid and cid in seen_canonical:
+            raw = f.read()
+        # Both scanners append rows company-by-company while this may run, so
+        # the file can end mid-record (OS buffer flush).  A half-written row
+        # must NEVER be ingested as a truncated job: only complete,
+        # newline-terminated records are considered — the partial tail is
+        # simply left for the next pass.  csv.reader (rather than line
+        # splitting) is still used so quoted fields containing newlines —
+        # legitimately produced by the scanners — parse correctly.
+        if raw and not raw.endswith("\n"):
+            cut = raw.rfind("\n")
+            raw = raw[:cut + 1] if cut >= 0 else ""
+        if not raw:
+            return 0, 0
+        reader = csv.reader(io.StringIO(raw))
+        fieldnames = next(reader, None)
+        if not fieldnames:
+            return 0, 0
+        for values in reader:
+            consumed += 1
+            if consumed <= skip:
+                continue
+            if len(values) != len(fieldnames):
+                # Never let an extra/missing column shift values into the
+                # wrong field (the header is the contract).
+                values = (values + [""] * len(fieldnames))[:len(fieldnames)]
+            row = dict(zip(fieldnames, values))
+            cid = str(row.get("Canonical Job ID") or "").strip()
+            if cid and cid in seen_canonical:
+                duplicates += 1
+                continue
+            job = _row_to_job(row, source_subtype=source_subtype, run_id=run_id)
+            if job is None:
+                db.record_scan_event(
+                    db_path, run_id, level="warning", phase="ingest",
+                    company=str(row.get("Company Name") or row.get("Seed Name") or ""),
+                    message="Skipped row (no valid URL / unparsable): "
+                            + str(row.get("Job Title") or "")[:120])
+                continue
+            # G3 fuzzy fallback: only for rows WITHOUT a canonical ID.
+            # Rows with an ID keep trusting it — the same title+city can
+            # legitimately be distinct openings at one company.
+            if not cid:
+                fuzzy = (
+                    " ".join(str(job.get("company") or "").lower().split()),
+                    re.sub(r"\W+", "", str(job.get("title") or "").lower()),
+                    str(job.get("country") or ""),
+                )
+                if fuzzy in seen_fuzzy:
                     duplicates += 1
                     continue
-                job = _row_to_job(row, source_subtype=source_subtype, run_id=run_id)
-                if job is None:
-                    db.record_scan_event(
-                        db_path, run_id, level="warning", phase="ingest",
-                        company=str(row.get("Company Name") or row.get("Seed Name") or ""),
-                        message="Skipped row (no valid URL / unparsable): "
-                                + str(row.get("Job Title") or "")[:120])
-                    continue
-                try:
-                    persistence.upsert_job(conn, job)
-                except Exception:
-                    logger.exception("Failed to upsert job %s", job.get("url"))
-                    db.record_scan_event(
-                        db_path, run_id, level="error", phase="ingest",
-                        company=job.get("company", ""),
-                        message=f"Failed to ingest job {job.get('url')}")
-                    continue
-                if cid:
-                    seen_canonical.add(cid)
-                ingested += 1
+                seen_fuzzy.add(fuzzy)
+            try:
+                persistence.upsert_job(conn, job, commit=False)
+            except Exception:
+                logger.exception("Failed to upsert job %s", job.get("url"))
+                db.record_scan_event(
+                    db_path, run_id, level="error", phase="ingest",
+                    company=job.get("company", ""),
+                    message=f"Failed to ingest job {job.get('url')}")
+                continue
+            if cid:
+                seen_canonical.add(cid)
+            ingested += 1
+            pending += 1
+            if pending >= 500:
+                conn.commit()
+                pending = 0
+        if pending:
+            conn.commit()
     finally:
         conn.close()
+    if skip_box is not None:
+        skip_box[0] = consumed
     return ingested, duplicates
 
 
@@ -246,6 +388,8 @@ def _ingest_scan_log(db_path, path: Path, run_id: str, scanner: str) -> tuple[in
         db.record_scan_log_rows(db_path, run_id, scanner, rows)
         # Elevate per-company failures into the event timeline so hidden errors
         # that reduce job yield are visible in the downloaded scan analysis.
+        # Collected first and written in ONE transaction (batch).
+        events: list[tuple[str, str, str, str]] = []
         for row in rows:
             status = str(row.get("Status") or row.get("status") or "").lower()
             err = (row.get("Error") or row.get("error") or "").strip()
@@ -257,12 +401,60 @@ def _ingest_scan_log(db_path, path: Path, run_id: str, scanner: str) -> tuple[in
                 # "ok" and "partial" both produced jobs for the target.
                 status_counts["ok"] += 1
             if status in ("error", "failed", "partial") or err:
-                db.record_scan_event(
-                    db_path, run_id, level="error", phase=scanner,
-                    company=str(row.get("Company") or row.get("Seed Name") or ""),
-                    message=" | ".join(part for part in
-                                       (err, str(row.get("Diagnostics") or "")) if part)[:2000])
+                events.append((
+                    "error", scanner,
+                    str(row.get("Company") or row.get("Seed Name") or ""),
+                    " | ".join(part for part in
+                               (err, str(row.get("Diagnostics") or "")) if part)[:2000]))
+        try:
+            db.record_scan_events(db_path, run_id, events)
+        except Exception:  # pragma: no cover - evidence logging must not crash
+            logger.exception("Failed to record scan-log events")
     return len(rows), status_counts
+
+
+def _ingest_error_csv(db_path, path: Path, run_id: str, scanner: str) -> int:
+    """Copy one scanner's ``<output>_errors.csv`` rows into the run timeline.
+
+    Both scanners write a dedicated errors artifact (crash-safe: appended
+    immediately, so a mid-run abort still leaves evidence).  Those rows carry
+    detail the scan-log's single ``Error`` column cannot hold — the phase
+    (target / browser_fallback / detail / seed) and the exception type — so
+    they are surfaced in ``scan_events`` where the Tools tab's
+    "Download Scan Log" export can pick them up.
+
+    Returns the number of rows ingested.
+    """
+    if not path or not path.exists():
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.DictReader(f))
+    except OSError:
+        logger.exception("Failed to read error artifact %s", path)
+        return 0
+    count = 0
+    events: list[tuple[str, str, str, str]] = []
+    for row in rows:
+        message = " | ".join(
+            part for part in (
+                str(row.get("Error Type") or "").strip(),
+                str(row.get("Message") or "").strip(),
+            ) if part)
+        if not message:
+            continue
+        events.append((
+            "error",
+            f"{scanner}/{str(row.get('Phase') or 'error').strip()}",
+            str(row.get("Seed Name") or ""),
+            message[:2000],
+        ))
+        count += 1
+    try:
+        db.record_scan_events(db_path, run_id, events)
+    except Exception:  # pragma: no cover - evidence logging must not crash
+        logger.exception("Failed to record error events")
+    return count
 
 
 def _count_seed_rows(path: Path) -> int:
@@ -297,21 +489,61 @@ def _infer_phase(msg: str) -> str:
     return "pipeline"
 
 
-def _event_tee(db_path, run_id: str, progress: ProgressFn) -> ProgressFn:
-    """Wrap a progress callback so every line is also persisted to the run's
-    scan_events timeline (level/phase inferred from the message text)."""
-    def tee(msg: str) -> None:
-        progress(msg)
+class _EventTee:
+    """Progress wrapper that also persists each line to the run timeline.
+
+    Batched on purpose.  The previous implementation called
+    ``db.record_scan_event`` for every single line, which opens a fresh SQLite
+    connection *and commits* per call — a chatty scan (thousands of per-company
+    / per-page lines) turned that into thousands of write transactions and a
+    serious I/O tax on low-end hardware.  Lines are now buffered and written in
+    one transaction per batch.
+    """
+
+    FLUSH_EVERY = 25
+    FLUSH_SECONDS = 2.0
+
+    def __init__(self, db_path, run_id: str, progress: ProgressFn):
+        self.db_path = db_path
+        self.run_id = run_id
+        self.progress = progress
+        self._buffer: list[tuple[str, str, str, str]] = []
+        self._lock = threading.Lock()
+        self._last = time.monotonic()
+
+    def __call__(self, msg: str) -> None:
+        self.progress(msg)
+        text = str(msg)
+        rows: list[tuple[str, str, str, str]] = []
+        with self._lock:
+            self._buffer.append(
+                (_infer_level(text), _infer_phase(text), "", text[:2000]))
+            now = time.monotonic()
+            if (len(self._buffer) >= self.FLUSH_EVERY
+                    or (now - self._last) >= self.FLUSH_SECONDS):
+                rows, self._buffer = self._buffer, []
+                self._last = now
+        if rows:
+            self._write(rows)
+
+    def flush(self) -> None:
+        """Write any buffered lines (called before the run is finalised)."""
+        with self._lock:
+            rows, self._buffer = self._buffer, []
+        if rows:
+            self._write(rows)
+
+    def _write(self, rows) -> None:
         try:
-            db.record_scan_event(
-                db_path, run_id,
-                level=_infer_level(msg),
-                phase=_infer_phase(msg),
-                message=str(msg),
-            )
+            db.record_scan_events(self.db_path, self.run_id, rows)
         except Exception:  # pragma: no cover - event logging must not crash scans
             pass
-    return tee
+
+
+def _event_tee(db_path, run_id: str, progress: ProgressFn) -> _EventTee:
+    """Wrap a progress callback so every line is also persisted to the run's
+    scan_events timeline (level/phase inferred from the message text)."""
+    return _EventTee(db_path, run_id, progress)
 
 
 class _LiveIngester(threading.Thread):
@@ -338,6 +570,11 @@ class _LiveIngester(threading.Thread):
         self.interval = interval
         self.progress = progress or _noop_progress
         self._stop = threading.Event()
+        # Per-CSV record counters so each cycle parses only newly appended
+        # rows.  Without this the poller re-read the entire (constantly
+        # growing) CSV every interval, which is O(n^2) across a scan and made
+        # long scans progressively heavier on CPU and disk.
+        self._offsets: dict[str, list[int]] = {}
 
     def stop(self):
         self._stop.set()
@@ -347,9 +584,11 @@ class _LiveIngester(threading.Thread):
         while not self._stop.wait(self.interval):
             try:
                 for path, subtype in self.csv_specs:
+                    box = self._offsets.setdefault(str(path), [0])
                     ingested, _dups = _ingest_output_csv(
                         self.db_path, path, self.run_id,
-                        source_subtype=subtype, seen_canonical=self.seen_canonical)
+                        source_subtype=subtype, seen_canonical=self.seen_canonical,
+                        skip_box=box)
                     ingested_so_far += ingested
                 if ingested_so_far:
                     self.progress(
@@ -361,7 +600,7 @@ class _LiveIngester(threading.Thread):
 
 # ── Orchestration ────────────────────────────────────────────────────────────
 
-def run_scan(method: str = "quick",
+def run_scan(method: str = "full",
              db_path=None,
              cancel_event: threading.Event | None = None,
              only_companies: list | None = None,
@@ -369,9 +608,11 @@ def run_scan(method: str = "quick",
     """Run a full scan campaign and ingest the results.
 
     method:
-      * ``quick`` — ATS boards + career pages, no detail-page enrichment.
-      * ``full``  — same plus per-job detail-page evidence enrichment
-                    (Playwright; significantly slower).
+      * ``full``  — default.  ATS boards + career pages plus per-job
+                    detail-page evidence enrichment, so each job row is
+                    extracted as accurately as possible.
+      * ``quick`` — same coverage without the detail-page enrichment pass
+                    (dev CLI only; leaves some verdicts as ``Unknown``).
 
     only_companies: optional list of company names — when given, only those
       seed targets are scanned (CLI --company).
@@ -386,6 +627,8 @@ def run_scan(method: str = "quick",
     db_path = str(db_path or paths.DB_PATH)
     out_dir = paths.ensure_scan_output_dir()
     paths.ensure_user_data_dir()
+    # Keep the desktop responsive while a long scan competes for CPU.
+    lower_process_priority()
 
     # Reconcile bundled seeds with the user's mutable copies: append any
     # companies added to the bundled defaults that the user copy is missing
@@ -514,6 +757,10 @@ def run_scan(method: str = "quick",
                 detail_scan=detail,
                 cancel_event=cancel_event,
                 only_companies=only_companies,
+                # Host-adaptive: the scanner sizes its own browser pool from
+                # CPU/RAM when this is None (2-core / 8 GB machines must not
+                # run several Chromium instances at once).
+                max_workers=recommended_workers("browser"),
             )
             scanner.run_id = run_id
             career_module.progress_cb = progress
@@ -527,6 +774,15 @@ def run_scan(method: str = "quick",
             progress(f"Career scan failed: {exc}")
 
     # 3 ─ Ingest accepted rows + scan logs into the DB ------------------------
+    # Detach the UI progress callbacks: the module-level ``progress_cb`` hooks
+    # would otherwise keep pointing at a window that may already be gone.
+    ats_module.progress_cb = None
+    career_module.progress_cb = None
+    # Persist any buffered timeline lines before the run is finalised.
+    try:
+        progress.flush()
+    except AttributeError:
+        pass
     live.stop()
     live.join(timeout=15)
     # Deliberately a *fresh* dedup set: the final pass re-reads every row once
@@ -549,6 +805,11 @@ def run_scan(method: str = "quick",
             log_rows, status_counts = _ingest_scan_log(
                 db_path, csv_base.with_name(csv_base.stem + "_scan_log.csv"),
                 run_id, scanner_label)
+            # Crash-safe error artifact (new in the synced scanner versions):
+            # per-phase exception detail that the scan log cannot hold.
+            _ingest_error_csv(
+                db_path, csv_base.with_name(csv_base.stem + "_errors.csv"),
+                run_id, scanner_label)
         except Exception as exc:
             logger.exception("Ingestion failed for %s", csv_base)
             phase_errors.append(
@@ -565,17 +826,28 @@ def run_scan(method: str = "quick",
             "recruiter": str(csv_base.with_name(csv_base.stem + "_recruiter.csv")),
             "quarantine": str(csv_base.with_name(csv_base.stem + "_quarantine.csv")),
             "scan_log": str(csv_base.with_name(csv_base.stem + "_scan_log.csv")),
+            "errors": str(csv_base.with_name(csv_base.stem + "_errors.csv")),
         }
+
+    # F9 fix: quarantine totals come from the scan_log rows (the scanners
+    # are the authority on what they filtered); the Tools tab reads this key.
+    try:
+        quarantined_total = db.sum_scan_log_quarantined(db_path, run_id)
+    except Exception:
+        logger.exception("Failed to sum quarantined rows")
+        quarantined_total = 0
 
     summary["ingested"] = ingested_total
     summary["duplicates"] = dup_total
+    summary["quarantined"] = quarantined_total
     summary["log_rows"] = log_rows_total
     summary["cancelled"] = cancelled
     if phase_errors and ingested_total == 0:
         summary["status"] = "error"
     elif cancelled:
         summary["status"] = "cancelled"
-    elif phase_errors:
+    elif phase_errors or targets_error > 0:
+        # F9 fix: dead/error targets make the run partial, not completed.
         summary["status"] = "partial"
     else:
         summary["status"] = "completed"
@@ -585,13 +857,20 @@ def run_scan(method: str = "quick",
             db_path, run_id,
             targets_ok=targets_ok, targets_empty=targets_empty,
             targets_error=targets_error,
-            jobs_found=ingested_total, jobs_duplicates=dup_total,
-            status=summary["status"],
+            jobs_found=ingested_total, jobs_quarantined=quarantined_total,
+            jobs_duplicates=dup_total, status=summary["status"],
             error="; ".join(phase_errors)[:2000],
         )
     except Exception:  # pragma: no cover - evidence logging must not crash
         logger.exception("Failed to finalise scan_runs row")
 
     progress(f"Scan {run_id} finished: status={summary['status']}, "
-             f"ingested={ingested_total}, duplicates={dup_total}")
+             f"ingested={ingested_total}, duplicates={dup_total}, "
+             f"quarantined={quarantined_total}, "
+             f"targets ok/empty/error={targets_ok}/{targets_empty}/{targets_error}")
+    # Flush the final lines into the run timeline.
+    try:
+        progress.flush()
+    except AttributeError:
+        pass
     return summary

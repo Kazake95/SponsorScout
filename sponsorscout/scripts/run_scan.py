@@ -1,13 +1,16 @@
 """CLI scan runner (PySide6 restart).
 
 Usage:
-    python -m sponsorscout.scripts.run_scan              # quick (API-first)
-    python -m sponsorscout.scripts.run_scan --full        # full browser crawl
-    python -m sponsorscout.scripts.run_scan --dedup       # run dedup after scanning
-    python -m sponsorscout.scripts.run_scan --company X   # scan a single company
+    python -m sponsorscout.scripts.run_scan              # full scan (default)
+    python -m sponsorscout.scripts.run_scan --quick      # dev: skip detail pages
+    python -m sponsorscout.scripts.run_scan --dedup      # run dedup after scanning
+    python -m sponsorscout.scripts.run_scan --company X  # scan a single company
 
 Wraps :func:`sponsorscout.scanning.pipeline.run_scan`, which runs the ATS
 phase then the career phase and ingests the results into the database.
+
+The app uses a single, thorough scan mode (``full``).  ``--quick`` is a
+developer-only escape hatch that skips the per-job detail-page enrichment.
 """
 from __future__ import annotations
 
@@ -21,8 +24,10 @@ from sponsorscout.scanning import pipeline
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SponsorScout job scanner")
+    parser.add_argument("--quick", action="store_true",
+                        help="Dev only: skip per-job detail-page enrichment")
     parser.add_argument("--full", action="store_true",
-                        help="Full browser crawl (slow) instead of quick API-first")
+                        help="Deprecated alias — full is now the default")
     parser.add_argument("--dedup", action="store_true",
                         help="Run dedup after scanning")
     parser.add_argument("--company", type=str, default=None,
@@ -30,7 +35,7 @@ def main() -> None:
     args = parser.parse_args()
 
     initialize(DB_PATH)
-    method = "full" if args.full else "quick"
+    method = "quick" if args.quick else "full"
 
     if args.company:
         from sponsorscout.application import seed_manager

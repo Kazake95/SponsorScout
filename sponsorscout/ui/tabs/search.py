@@ -158,7 +158,7 @@ class SearchTab(QWidget):
                 row["company"],
                 row["country"],
                 row["location"],
-                "Y" if (row["sponsorship_score"] or 0) >= 70 else "",
+                _verdict_cell(row["visa_sponsorship"]),
                 _verdict_cell(row["eu_blue_card_verdict"]),
                 _verdict_cell(row["relocation_support"]),
                 row["remote_type"],
@@ -171,6 +171,27 @@ class SearchTab(QWidget):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(r, col, item)
         self.table.setSortingEnabled(True)
+        self._refresh_filter_facets(rows)
+
+    def _refresh_filter_facets(self, rows) -> None:
+        """R2: rebuild Country/Remote dropdowns from the CURRENT result set.
+
+        Options always match what the user is looking at (faceted search);
+        the current selection is preserved when still present, otherwise
+        the combo resets to All.
+        """
+        countries = sorted({str(r["country"] or "") for r in rows} - {""})
+        remotes = sorted({str(r["remote_type"] or "") for r in rows} - {""})
+        for combo, values in ((self.country_combo, countries),
+                              (self.remote_combo, remotes)):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(_("All"))
+            combo.addItems(values)
+            idx = combo.findText(current)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.blockSignals(False)
 
     def clear_filters(self):
         for edit in (self.title_edit, self.company_edit, self.location_edit):
