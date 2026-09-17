@@ -2,7 +2,7 @@
 
 # SponsorScout
 
-[🇬🇧 English](#english) · [🇮🇹 Italiano](#italiano)
+[🇬🇧 English](#-english) · [🇮🇹 Italiano](#-italiano)
 
 ---
 
@@ -10,18 +10,18 @@
 
 ## 📖 Table of Contents
 
-- [Download](#download)
-- [What SponsorScout Does](#what-sponsorscout-does)
-- [Quick Start](#quick-start)
-- [The Five Tabs](#the-five-tabs)
-- [Language Switching](#language-switching)
-- [One Scan Mode — Always the Complete One](#one-scan-mode-always-the-complete-one)
-- [How Scanning Works](#how-scanning-works)
-- [Where Your Data Lives](#where-your-data-lives)
-- [Troubleshooting & FAQ](#troubleshooting-faq)
-- [Building From Source](#building-from-source)
-- [Requirements](#requirements)
-- [License](#license)
+- [Download](#-download)
+- [What SponsorScout Does](#-what-sponsorscout-does)
+- [Quick Start](#-quick-start)
+- [The Five Tabs](#-the-five-tabs)
+- [Language Switching](#-language-switching)
+- [One Scan Mode — Always the Complete One](#-one-scan-mode--always-the-complete-one)
+- [How Scanning Works](#-how-scanning-works)
+- [Where Your Data Lives](#-where-your-data-lives)
+- [Troubleshooting & FAQ](#-troubleshooting--faq)
+- [Building From Source](#-building-from-source)
+- [Requirements](#-requirements)
+- [License](#-license)
 
 ## 📥 Download
 
@@ -102,7 +102,7 @@ The control centre:
   buttons shows live progress (`ATS 12/46`, `Career 88/162`) and reaches 100%
   when the scan finishes; the full per-company output appears in the log
   window. There is no mode to choose — see
-  [One Scan Mode](#one-scan-mode-always-the-complete-one).
+  [One Scan Mode](#-one-scan-mode--always-the-complete-one).
 - **Scan History** — every past scan run; select one to view or download a
   detailed per-company log including errors. Stopped scans show `cancelled`;
   once a resume finishes everything left, the stopped row becomes `resumed`
@@ -154,7 +154,7 @@ the complete campaign, because a partial scan would silently hide jobs.
 
 ---
 
-## ⚙️ How Scanning Works
+## 🔧 How Scanning Works
 
 1. SponsorScout reads its **seed files** — curated lists of companies with
    their career URLs and ATS type.
@@ -237,7 +237,7 @@ an invalid pattern shows a warning and falls back to a normal search instead of
 returning nothing.
 
 **Where is my data, and how do I back it up?**
-See [Where Your Data Lives](#where-your-data-lives). Copying
+See [Where Your Data Lives](#-where-your-data-lives). Copying
 `sponsorscout.db` backs up all jobs, companies and applications.
 
 **Does anything leave my computer?**
@@ -269,6 +269,25 @@ The script also bundles the Playwright Chromium browser into the installer.
 Output: `dist/sponsorscout_<version>_amd64.deb`.
 The script also bundles the Playwright Chromium browser into the .deb.
 
+### 🔎 Developer Checks
+
+Two maintenance scripts in `tools/` guard the things that break silently:
+
+```bash
+python tools/check_dev_sync.py               # dev algorithms vs app package
+python tools/check_readme_anchors.py --live  # in-page links vs GitHub anchors
+```
+
+- `check_dev_sync.py` proves every symbol of the standalone algorithms in
+  `extra_for_dev_purpose(do not delete)/main_job_search_algorithms/` is
+  implemented in `sponsorscout/`, so a tuned dev script can never be missing
+  from the app and make it miss jobs. Use `--strict` in CI.
+- `check_readme_anchors.py` recomputes the anchor GitHub generates for every
+  heading (a leading emoji becomes part of the anchor, so it is `#-download`
+  and must have the same name as its target), so a heading with a stray
+  apostrophe or dash cannot leave you with links pointing nowhere. `--live`
+  also compares the local result with the anchors GitHub actually published.
+
 ---
 
 ## 📋 Requirements
@@ -292,18 +311,18 @@ MIT — see [LICENSE](LICENSE).
 
 ## 📖 Indice
 
-- [Scarica](#scarica)
-- [Cosa Fa SponsorScout](#cosa-fa-sponsorscout)
-- [Avvio Rapido](#avvio-rapido)
-- [Le Cinque Schede](#le-cinque-schede)
-- [Cambio Lingua](#cambio-lingua)
-- [Una Sola Modalità di Scansione — Sempre quella Completa](#una-sola-modalità-di-scansione-sempre-quella-completa)
-- [Come Funziona la Scansione](#come-funziona-la-scansione)
-- [Dove Sono i Tuoi Dati](#dove-sono-i-tuoi-dati)
-- [Risoluzione Problemi e Domande Frequenti](#risoluzione-problemi-e-domande-frequenti)
-- [Compilare dai Sorgenti](#compilare-dai-sorgenti)
-- [Requisiti](#requisiti)
-- [Licenza](#licenza)
+- [Scarica](#-scarica)
+- [Cosa Fa SponsorScout](#-cosa-fa-sponsorscout)
+- [Avvio Rapido](#-avvio-rapido)
+- [Le Cinque Schede](#-le-cinque-schede)
+- [Cambio Lingua](#-cambio-lingua)
+- [Una Sola Modalità di Scansione — Sempre quella Completa](#-una-sola-modalità-di-scansione--sempre-quella-completa)
+- [Come Funziona la Scansione](#-come-funziona-la-scansione)
+- [Dove Sono i Tuoi Dati](#-dove-sono-i-tuoi-dati)
+- [Risoluzione Problemi e Domande Frequenti](#-risoluzione-problemi-e-domande-frequenti)
+- [Compilare dai Sorgenti](#-compilare-dai-sorgenti)
+- [Requisiti](#-requisiti)
+- [Licenza](#-licenza)
 
 ## 📥 Scarica
 
@@ -390,7 +409,7 @@ Il centro di controllo:
   mostra il progresso live (`ATS 12/46`, `Carriere 88/162`) e arriva al 100%
   a scansione finita; l'output completo per azienda appare nella finestra di
   log. Non c'è alcuna modalità da scegliere — vedi
-  [Una Sola Modalità di Scansione](#una-sola-modalità-di-scansione-sempre-quella-completa).
+  [Una Sola Modalità di Scansione](#-una-sola-modalità-di-scansione--sempre-quella-completa).
 - **Cronologia Scansioni** — ogni scansione passata; selezionane una per
   visualizzare o scaricare un registro dettagliato per azienda, errori
   inclusi. Le scansioni interrotte mostrano `cancelled`; quando una ripresa
@@ -449,7 +468,7 @@ nasconderebbe dei lavori senza alcun avviso.
 ---
 
 
-## ⚙️ Come Funziona la Scansione
+## 🔧 Come Funziona la Scansione
 
 1. SponsorScout legge i suoi **file seed** — elenchi curati di aziende con
    i loro URL carriera e tipo di ATS.
@@ -535,7 +554,7 @@ maiuscole/minuscole e un pattern non valido mostra un avviso e ripiega su una
 ricerca normale invece di restituire zero risultati.
 
 **Dove sono i miei dati e come faccio un backup?**
-Vedi [Dove Sono i Tuoi Dati](#dove-sono-i-tuoi-dati). Copiando
+Vedi [Dove Sono i Tuoi Dati](#-dove-sono-i-tuoi-dati). Copiando
 `sponsorscout.db` salvi lavori, aziende e candidature.
 
 **Qualcosa esce dal mio computer?**
@@ -566,6 +585,26 @@ Lo script include anche il browser Playwright Chromium nell'installer.
 
 Output: `dist/sponsorscout_<versione>_amd64.deb`.
 Lo script include anche il browser Playwright Chromium nel pacchetto .deb.
+
+### 🔎 Controlli per Sviluppatori
+
+Due script di manutenzione in `tools/` proteggono ciò che si rompe in
+silenzio:
+
+```bash
+python tools/check_dev_sync.py               # algoritmi dev vs pacchetto app
+python tools/check_readme_anchors.py --live  # link interni vs ancore GitHub
+```
+
+- `check_dev_sync.py` dimostra che ogni simbolo degli algoritmi standalone in
+  `extra_for_dev_purpose(do not delete)/main_job_search_algorithms/` è
+  implementato in `sponsorscout/`, così uno script dev aggiornato non può mai
+  mancare nell'app e farle perdere dei lavori. Usa `--strict` in CI.
+- `check_readme_anchors.py` ricalcola l'ancora che GitHub genera per ogni
+  titolo (un'emoji iniziale entra nell'ancora: è `#-download`, non
+  `#download`), così un titolo con apostrofo o trattino non può lasciarti con
+  link che non portano da nessuna parte. Con `--live` confronta il risultato
+  locale con le ancore realmente pubblicate da GitHub.
 
 ---
 
