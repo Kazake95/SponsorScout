@@ -388,6 +388,33 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Scan every seeded company (ATS boards + career pages) and enrich each job from its detail page, so no listing misses its evidence.":
             "Scan every seeded company (ATS boards + career pages) and enrich each job from its detail page, so no listing misses its evidence.",
         "Scan History description": "Every past scan run. Select a row to view or download its per-company log with errors.",
+        "Resume": "Resume",
+        "Stop (keep progress)": "Stop (keep progress)",
+        "Continue the last stopped scan — only companies it did not finish are scanned, so no progress is lost.":
+            "Continue the last stopped scan — only companies it did not finish are scanned, so no progress is lost.",
+        "Stop the scan now and keep everything found so far. Press Resume later to continue the remaining companies — all browsers close, so other apps run smoothly again.":
+            "Stop the scan now and keep everything found so far. Press Resume later to continue the remaining companies — all browsers close, so other apps run smoothly again.",
+        "Resuming scan": "Resuming scan",
+        "Nothing to resume — no stopped scan with unfinished companies.":
+            "Nothing to resume — no stopped scan with unfinished companies.",
+        "Could not find a scan to resume:\n{error}":
+            "Could not find a scan to resume:\n{error}",
+        "Resuming {run} — {done}/{total} companies already done, {remaining} remaining.":
+            "Resuming {run} — {done}/{total} companies already done, {remaining} remaining.",
+        "(+{n} companies added to seeds since the stop — they are included.)":
+            "(+{n} companies added to seeds since the stop — they are included.)",
+        "Resuming — {done}/{total} done.":
+            "Resuming — {done}/{total} done.",
+        "Resume {run} — {done}/{total} done, {remaining} remaining.":
+            "Resume {run} — {done}/{total} done, {remaining} remaining.",
+        "resumed": "resumed",
+        "resumed from": "resumed from",
+        "Starting scan…": "Starting scan…",
+        "ATS": "ATS",
+        "Career": "Career",
+        "Scan": "Scan",
+        "Finished.": "Finished.",
+        "Cancelled — partial progress shown.": "Cancelled — partial progress shown.",
         "Data Quality description": "Remove duplicate jobs/companies, clear expired (stale) jobs, or wipe all scanned data.",
         "Freshness Check description": "Re-verify saved jobs against their live pages and mark expired listings.",
     },
@@ -773,6 +800,33 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "Scan every seeded company (ATS boards + career pages) and enrich each job from its detail page, so no listing misses its evidence.":
             "Scansiona ogni azienda seminata (board ATS + pagine carriere) e arricchisce ogni lavoro dalla sua pagina di dettaglio, così nessun annuncio resta senza evidenza.",
         "Scan History description": "Ogni scansione passata. Seleziona una riga per visualizzare o scaricare il suo registro per azienda con errori.",
+        "Resume": "Riprendi",
+        "Stop (keep progress)": "Ferma (mantieni progresso)",
+        "Continue the last stopped scan — only companies it did not finish are scanned, so no progress is lost.":
+            "Continua l'ultima scansione interrotta — vengono scansionate solo le aziende non completate, nessun progresso va perso.",
+        "Stop the scan now and keep everything found so far. Press Resume later to continue the remaining companies — all browsers close, so other apps run smoothly again.":
+            "Ferma ora la scansione mantenendo tutto ciò che è stato trovato. Premi Riprendi più tardi per continuare le aziende restanti — tutti i browser si chiudono, così le altre app tornano fluide.",
+        "Resuming scan": "Ripresa scansione",
+        "Nothing to resume — no stopped scan with unfinished companies.":
+            "Nulla da riprendere — nessuna scansione interrotta con aziende incompiute.",
+        "Could not find a scan to resume:\n{error}":
+            "Impossibile trovare una scansione da riprendere:\n{error}",
+        "Resuming {run} — {done}/{total} companies already done, {remaining} remaining.":
+            "Ripresa {run} — {done}/{total} aziende già fatte, {remaining} restanti.",
+        "(+{n} companies added to seeds since the stop — they are included.)":
+            "(+{n} aziende aggiunte ai seed dopo lo stop — sono incluse.)",
+        "Resuming — {done}/{total} done.":
+            "Ripresa — {done}/{total} fatte.",
+        "Resume {run} — {done}/{total} done, {remaining} remaining.":
+            "Riprendi {run} — {done}/{total} fatte, {remaining} restanti.",
+        "resumed": "ripresa",
+        "resumed from": "ripresa da",
+        "Starting scan…": "Avvio scansione…",
+        "ATS": "ATS",
+        "Career": "Carriere",
+        "Scan": "Scansione",
+        "Finished.": "Finita.",
+        "Cancelled — partial progress shown.": "Annullata — avanzamento parziale mostrato.",
         "Data Quality description": "Rimuovi lavori/aziende duplicati, cancella lavori scaduti (obsoleti) o elimina tutti i dati scansionati.",
         "Freshness Check description": "Riverifica i lavori salvati rispetto alle loro pagine live e segna le scadute.",
     },

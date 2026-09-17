@@ -467,6 +467,93 @@ def _count_seed_rows(path: Path) -> int:
         return 0
 
 
+class _ScanProgress:
+    """Count completed companies and emit machine-readable progress lines.
+
+    The scanners already print one result line per finished company
+    (``OK:/EMPTY:/ERROR: … wrote=…`` for ATS, ``OK <name>:/EMPTY …`` for
+    career).  This wrapper sniffs those lines and emits
+    ``PROGRESS: done/total:phase:label`` after each one, which the UI
+    turns into QProgressBar updates.  No scanner logic is touched — pure
+    transport.  Thread-safe: career workers complete concurrently.
+    """
+
+    PREFIX = "PROGRESS:"
+
+    def __init__(self, n_ats: int, n_career: int,
+                 base_ats: int = 0, base_career: int = 0):
+        self.n_ats = max(0, int(n_ats))
+        self.n_career = max(0, int(n_career))
+        # Resume support: companies already finished in a previous run.
+        # Ticks report the *overall* position (base + this run's count) so
+        # the bar continues from the checkpoint instead of restarting at 0.
+        self.base_ats = max(0, int(base_ats))
+        self.base_career = max(0, int(base_career))
+        self.total = self.n_ats + self.n_career + self.base_ats + self.base_career
+        self._lock = threading.Lock()
+        self._ats_done = 0
+        self._career_done = 0
+
+    def wrap(self, progress: ProgressFn) -> ProgressFn:
+        """Wrap a progress callback so company completions also emit ticks."""
+        tracker = self
+
+        def _wrapped(msg) -> None:
+            progress(msg)
+            if tracker.total <= 0:
+                return
+            try:
+                text = str(msg)
+            except Exception:
+                return
+            ticks: list[str] = []
+            with tracker._lock:
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith(tracker.PREFIX):
+                        continue  # never count our own tick lines
+                    upper = stripped.upper()
+                    if ("WROTE=" not in upper):
+                        continue
+                    if (upper.startswith("OK:") or upper.startswith("EMPTY:")
+                            or upper.startswith("ERROR:")):
+                        # ATS result line: "OK:/EMPTY:/ERROR: wrote=…"
+                        tracker._ats_done = min(
+                            tracker._ats_done + 1, tracker.n_ats)
+                        done = (tracker.base_ats + tracker._ats_done
+                                + tracker.base_career + tracker._career_done)
+                        phase_done = tracker.base_ats + tracker._ats_done
+                        phase_total = tracker.base_ats + tracker.n_ats
+                        ticks.append(
+                            f"{tracker.PREFIX} {done}/{tracker.total}:ats:"
+                            f"ATS {phase_done}/{phase_total}")
+                    elif (upper.startswith("OK ") or upper.startswith("EMPTY ")
+                          or upper.startswith("ERROR ")
+                          or upper.startswith("PARTIAL ")):
+                        # Career result line: "OK <name>: wrote=…"
+                        tracker._career_done = min(
+                            tracker._career_done + 1, tracker.n_career)
+                        done = (tracker.base_ats + tracker._ats_done
+                                + tracker.base_career + tracker._career_done)
+                        phase_done = tracker.base_career + tracker._career_done
+                        phase_total = tracker.base_career + tracker.n_career
+                        ticks.append(
+                            f"{tracker.PREFIX} {done}/{tracker.total}:career:"
+                            f"Career {phase_done}/{phase_total}")
+            for tick in ticks:
+                try:
+                    progress(tick)
+                except Exception:
+                    pass
+
+        # Preserve the _EventTee.flush() API the pipeline calls directly.
+        try:
+            _wrapped.flush = progress.flush  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+        return _wrapped
+
+
 def _infer_level(msg: str) -> str:
     low = msg.lower()
     if "error" in low or "failed" in low or "exception" in low or "✗" in low:
@@ -581,6 +668,7 @@ class _LiveIngester(threading.Thread):
 
     def run(self):
         ingested_so_far = 0
+        last_reported = 0
         while not self._stop.wait(self.interval):
             try:
                 for path, subtype in self.csv_specs:
@@ -590,7 +678,12 @@ class _LiveIngester(threading.Thread):
                         source_subtype=subtype, seen_canonical=self.seen_canonical,
                         skip_box=box)
                     ingested_so_far += ingested
-                if ingested_so_far:
+                # Throttle: the 5s poller used to emit the same count dozens
+                # of times per company (e.g. ~200 identical Hays lines),
+                # flooding the chunk queue, the event-tee DB writes and the
+                # log widget.  Emit only when the count actually grew.
+                if ingested_so_far and ingested_so_far != last_reported:
+                    last_reported = ingested_so_far
                     self.progress(
                         f"Ingested live so far: {ingested_so_far} jobs "
                         "(Dashboard 'Refresh' reflects these)")
@@ -604,7 +697,8 @@ def run_scan(method: str = "full",
              db_path=None,
              cancel_event: threading.Event | None = None,
              only_companies: list | None = None,
-             progress: ProgressFn | None = None) -> dict:
+             progress: ProgressFn | None = None,
+             resume_from: str | None = None) -> dict:
     """Run a full scan campaign and ingest the results.
 
     method:
@@ -616,6 +710,14 @@ def run_scan(method: str = "full",
 
     only_companies: optional list of company names — when given, only those
       seed targets are scanned (CLI --company).
+
+    resume_from: optional run_id of a stopped run.  Companies already
+      finished in that run (per its ``scan_log`` rows) are skipped — the
+      scanners never revisit them — and the progress bar is offset so it
+      continues from the checkpoint instead of restarting at 0.  Combines
+      with ``only_companies`` (the intersection is scanned).  Completed
+      rows were already ingested into jobs, and re-ingestion upserts on
+      the canonical URL key, so nothing is lost or duplicated.
 
     Must be called from a worker thread (it performs network I/O); the UI
     layer receives progress via ``progress`` and cancellation via the shared
@@ -667,24 +769,60 @@ def run_scan(method: str = "full",
 
     n_ats = _count_seed_rows(seed_manager.user_ats_path())
     n_career = _count_seed_rows(seed_manager.user_career_path())
+    # Resume (Stop-as-checkpoint): companies finished in the stopped run
+    # are excluded before scanning starts — the scanners never revisit
+    # them, and their rows are already in jobs via live ingestion.
+    skip_names: set[str] = set()
+    if resume_from:
+        try:
+            _done = db.get_completed_scan_companies(db_path, resume_from)
+            skip_names = set(_done.get("ats", set())) | set(
+                _done.get("career", set()))
+        except Exception:
+            logger.exception("Could not load resume checkpoint %s", resume_from)
+            skip_names = set()
     seed_note = ""
     total_added = added.get("ats", 0) + added.get("career", 0)
     if total_added:
         seed_note = f" (seed update: +{total_added} new companies)"
+    wanted: set[str] | None = None
     if only_companies:
         wanted = {c.strip().lower() for c in only_companies if c and c.strip()}
-        if wanted:
-            n_ats = sum(
-                1 for r in seed_manager.read_seed_rows(
-                    seed_manager.user_ats_path())["rows"]
-                if r.get("name", "").strip().lower() in wanted)
-            n_career = sum(
-                1 for r in seed_manager.read_seed_rows(
-                    seed_manager.user_career_path())["rows"]
-                if r.get("name", "").strip().lower() in wanted)
+
+    def _remaining(path, names: set[str] | None, skip: set[str]) -> int:
+        count = 0
+        for r in seed_manager.read_seed_rows(path)["rows"]:
+            name = (r.get("name") or "").strip()
+            if not name:
+                continue
+            low = name.lower()
+            if names is not None and low not in names:
+                continue
+            if low in skip:
+                continue
+            count += 1
+        return count
+
+    if skip_names or wanted is not None:
+        # Remaining-to-scan after resume-skip and/or subset filter.
+        n_ats = _remaining(seed_manager.user_ats_path(), wanted, skip_names)
+        n_career = _remaining(seed_manager.user_career_path(), wanted,
+                              skip_names)
+    # Structured PROGRESS: lines for the UI progress bar (one tick per
+    # finished company).  Wrapped outside the event tee so ticks land in
+    # the run timeline too.  base_* offsets resume runs so the bar
+    # continues from the checkpoint (e.g. 54%) instead of restarting at
+    # 0; _ScanProgress clamps each phase so a subset can never overflow.
+    # NOTE: the offset applies only to resume skips — a pure subset scan
+    # (no resume_from) keeps base 0 so its bar spans just the subset.
+    full_ats = _count_seed_rows(seed_manager.user_ats_path())
+    full_career = _count_seed_rows(seed_manager.user_career_path())
+    progress = _ScanProgress(
+        n_ats, n_career,
+        base_ats=max(0, full_ats - n_ats) if skip_names else 0,
+        base_career=max(0, full_career - n_career)
+        if skip_names else 0).wrap(progress)
     db.start_scan_run(db_path, run_id, method, n_ats, n_career)
-    progress(f"Scan {run_id} started: method={method}, "
-             f"ATS companies={n_ats}, career companies={n_career}{seed_note}")
 
     # Live ingestion: scanners write accepted rows to their CSVs company by
     # company, so tail them into the DB while the scan runs. This makes the
@@ -704,6 +842,50 @@ def run_scan(method: str = "full",
     )
     live.start()
 
+    # Resume: the scanners each accept an only_companies whitelist, so
+    # feed them exactly the remaining companies.  ``None`` means "scan
+    # everything" — pass the computed remaining lists only when resuming.
+    resume_only: list[str] | None = None
+    if skip_names:
+        try:
+            ats_names = [
+                (r.get("name") or "").strip()
+                for r in seed_manager.read_seed_rows(
+                    seed_manager.user_ats_path())["rows"]]
+            career_names = [
+                (r.get("name") or "").strip()
+                for r in seed_manager.read_seed_rows(
+                    seed_manager.user_career_path())["rows"]]
+            if wanted is not None:
+                ats_names = [n for n in ats_names if n.lower() in wanted]
+                career_names = [n for n in career_names
+                                if n.lower() in wanted]
+            resume_only = [n for n in (ats_names + career_names)
+                           if n and n.lower() not in skip_names]
+            if not resume_only:
+                resume_only = []
+        except Exception:
+            logger.exception("Could not compute resume company list")
+            resume_only = None
+    # Effective whitelist for the scanners: explicit subset, resume
+    # remainder, or their intersection when both are given.
+    if resume_only is not None:
+        if wanted is not None:
+            _resume_set = {n.lower() for n in resume_only}
+            scan_only = [c for c in (only_companies or [])
+                         if c and c.strip().lower() in _resume_set]
+        else:
+            scan_only = list(resume_only)
+    else:
+        scan_only = list(only_companies) if only_companies else None
+    if resume_from and skip_names and (scan_only is None or scan_only):
+        _skipped = len(skip_names)
+        _note = (f" (resuming {resume_from}: skipping "
+                 f"{_skipped} finished companies)")
+        seed_note = f"{seed_note}{_note}" if seed_note else _note
+    progress(f"Scan {run_id} started: method={method}, "
+             f"ATS companies={n_ats}, career companies={n_career}{seed_note}")
+
     # 1 ─ ATS scan (API-first, fast) ------------------------------------------
     if n_ats > 0:
         try:
@@ -711,7 +893,7 @@ def run_scan(method: str = "full",
                 seed_file=str(seed_manager.user_ats_path()),
                 output_file=str(ats_out),
                 cancel_event=cancel_event,
-                only_companies=only_companies,
+                only_companies=scan_only,
             )
             scanner.run_id = run_id
             ats_module.progress_cb = progress
@@ -756,7 +938,7 @@ def run_scan(method: str = "full",
                 output_csv=str(career_out),
                 detail_scan=detail,
                 cancel_event=cancel_event,
-                only_companies=only_companies,
+                only_companies=scan_only,
                 # Host-adaptive: the scanner sizes its own browser pool from
                 # CPU/RAM when this is None (2-core / 8 GB machines must not
                 # run several Chromium instances at once).
@@ -842,6 +1024,8 @@ def run_scan(method: str = "full",
     summary["quarantined"] = quarantined_total
     summary["log_rows"] = log_rows_total
     summary["cancelled"] = cancelled
+    summary["resume_from"] = resume_from or ""
+    summary["resumed_skipped"] = len(skip_names) if resume_from else 0
     if phase_errors and ingested_total == 0:
         summary["status"] = "error"
     elif cancelled:
@@ -852,17 +1036,36 @@ def run_scan(method: str = "full",
     else:
         summary["status"] = "completed"
 
+    # Resume linkage (no schema migration): encode the parent run_id in the
+    # run's error/notes field so Scan History can show the chain.  Real
+    # phase errors are preserved alongside (parsed back by
+    # db.parse_resume_link).
+    _resume_tag = f"resumed_from:{resume_from}" if resume_from else ""
     try:
+        _err_text = "; ".join(phase_errors)[:1900]
+        if _resume_tag:
+            _err_text = f"{_err_text}; {_resume_tag}" if _err_text else _resume_tag
         db.finish_scan_run(
             db_path, run_id,
             targets_ok=targets_ok, targets_empty=targets_empty,
             targets_error=targets_error,
             jobs_found=ingested_total, jobs_quarantined=quarantined_total,
             jobs_duplicates=dup_total, status=summary["status"],
-            error="; ".join(phase_errors)[:2000],
+            error=_err_text[:2000],
         )
     except Exception:  # pragma: no cover - evidence logging must not crash
         logger.exception("Failed to finalise scan_runs row")
+
+    # Parent promotion: a resume child that covered everything left turns
+    # the stopped parent into "resumed" (completed via this child).  A
+    # child that was itself stopped keeps the parent resumable.
+    summary["parent_promoted"] = False
+    if resume_from and summary["status"] in ("completed", "partial"):
+        try:
+            summary["parent_promoted"] = bool(
+                db.mark_scan_resumed(db_path, resume_from, run_id))
+        except Exception:
+            logger.exception("Failed to promote resumed parent run")
 
     progress(f"Scan {run_id} finished: status={summary['status']}, "
              f"ingested={ingested_total}, duplicates={dup_total}, "

@@ -681,6 +681,214 @@ def get_scan_run(db_path, run_id: str):
             conn.close()
 
 
+def get_completed_scan_companies(db_path, run_id: str) -> dict:
+    """Companies already finished in one run, split by scanner phase.
+
+    Returns ``{"ats": set(names), "career": set(names)}`` (lower-cased
+    company names from the run's ``scan_log`` rows).  A row exists only
+    *after* a company fully completes, so anything absent here is safe to
+    (re)scan: completed rows were already live-ingested into jobs.
+    """
+    done = {"ats": set(), "career": set()}
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        rows = conn.execute(
+            "SELECT scanner, company FROM scan_log WHERE run_id=?",
+            (run_id,),
+        ).fetchall()
+    finally:
+        if conn:
+            conn.close()
+    for scanner, company in rows or []:
+        key = (scanner or "").strip().lower()
+        name = (company or "").strip().lower()
+        if not name:
+            continue
+        if key == "ats":
+            done["ats"].add(name)
+        elif key == "career":
+            done["career"].add(name)
+    return done
+
+
+def parse_resume_link(error_text: str | None) -> str:
+    """Extract the parent run_id from a scan_runs error field.
+
+    The pipeline encodes ``resumed_from:<parent_run_id>`` into the error
+    field (no schema migration needed); it may be ``;``-joined with real
+    phase errors.  Returns ``""`` when no linkage is present.
+    """
+    for part in (error_text or "").split(";"):
+        part = part.strip()
+        if part.lower().startswith("resumed_from:"):
+            return part.split(":", 1)[1].strip()
+    return ""
+
+
+def mark_scan_resumed(db_path, parent_run_id: str, child_run_id: str) -> bool:
+    """Promote a stopped parent run to ``resumed`` once fully covered.
+
+    Called when a resume child finishes: if the parent + child scan_log
+    rows jointly cover every current seed company (i.e. the parent has no
+    remaining work left), the parent's ``cancelled`` status becomes
+    ``resumed`` ("stopped, later completed via resume") and records which
+    child completed it.  Returns True when the parent was promoted.
+    Only ``cancelled``/``partial``/``error`` parents are eligible; a child
+    that was itself stopped with remainder left keeps the parent resumable.
+    """
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        row = conn.execute(
+            "SELECT status FROM scan_runs WHERE run_id=?",
+            (parent_run_id,),
+        ).fetchone()
+        if not row or (row[0] or "") not in ("cancelled", "partial", "error"):
+            return False
+    finally:
+        if conn:
+            conn.close()
+    # Union of parent + child completions covers everything?
+    try:
+        parent_done = get_completed_scan_companies(db_path, parent_run_id)
+        child_done = get_completed_scan_companies(db_path, child_run_id)
+    except Exception:
+        return False
+    covered = set(parent_done.get("ats", set())) | set(
+        child_done.get("ats", set())) | set(
+        parent_done.get("career", set())) | set(
+        child_done.get("career", set()))
+    try:
+        from sponsorscout.application import seed_manager
+        names = set()
+        for path in (seed_manager.user_ats_path(),
+                     seed_manager.user_career_path()):
+            for r in seed_manager.read_seed_rows(path)["rows"]:
+                name = (r.get("name") or "").strip().lower()
+                if name:
+                    names.add(name)
+    except Exception:
+        return False
+    if names - covered:
+        return False
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        conn.execute(
+            """UPDATE scan_runs SET status='resumed',
+                  error=CASE WHEN COALESCE(error,'')=''
+                             THEN ? ELSE error || '; ' || ? END
+               WHERE run_id=?""",
+            (f"resumed_by:{child_run_id}", f"resumed_by:{child_run_id}",
+             parent_run_id),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
+def parse_resumed_by(error_text: str | None) -> str:
+    """Extract the child run_id that completed a ``resumed`` parent row."""
+    for part in (error_text or "").split(";"):
+        part = part.strip()
+        if part.lower().startswith("resumed_by:"):
+            return part.split(":", 1)[1].strip()
+    return ""
+
+
+def get_resumable_scan(db_path) -> dict | None:
+    """Find the newest stopped scan that still has unscanned companies.
+
+    Returns ``None`` when there is nothing to resume, else a checkpoint::
+
+        {"run_id": ..., "method": ...,
+         "remaining_ats": [names...], "remaining_career": [names...],
+         "done_ats": n, "done_career": n, "total_ats": n, "total_career": n,
+         "added_since_stop": n}
+
+    Name matching is by lower-cased company name against the *current* user
+    seeds, so seed edits between stop and resume are handled: newly added
+    companies join ``remaining`` (counted in ``added_since_stop``), removed
+    ones simply drop out.
+    """
+    from sponsorscout.application import seed_manager
+
+    # Newest stopped run wins: a resume child stopped mid-way supersedes
+    # its parent (the parent's remainder is a subset of the child's view
+    # once the child's own completions are counted).  ``started_at`` has
+    # only 1s resolution and ties are possible in tests, so break them by
+    # rowid (insertion order) — later started = larger rowid.
+    conn = None
+    try:
+        conn = get_connection(db_path)
+        runs = conn.execute(
+            """SELECT run_id, method, status, ats_companies, career_companies
+               FROM scan_runs
+               WHERE status IN ('cancelled', 'partial', 'error')
+               ORDER BY rowid DESC LIMIT 10"""
+        ).fetchall()
+    finally:
+        if conn:
+            conn.close()
+    if not runs:
+        return None
+    for run in runs:
+        run_id = run[0]
+        try:
+            done = get_completed_scan_companies(db_path, run_id)
+        except Exception:
+            continue
+        try:
+            ats_rows = seed_manager.read_seed_rows(
+                seed_manager.user_ats_path())["rows"]
+            career_rows = seed_manager.read_seed_rows(
+                seed_manager.user_career_path())["rows"]
+        except Exception:
+            continue
+        remaining_ats = [
+            (r.get("name") or "").strip()
+            for r in ats_rows
+            if (r.get("name") or "").strip()
+            and (r.get("name") or "").strip().lower() not in done["ats"]
+        ]
+        remaining_career = [
+            (r.get("name") or "").strip()
+            for r in career_rows
+            if (r.get("name") or "").strip()
+            and (r.get("name") or "").strip().lower() not in done["career"]
+        ]
+        if not remaining_ats and not remaining_career:
+            continue  # fully covered — nothing left to resume
+        total_ats = len([r for r in ats_rows if (r.get("name") or "").strip()])
+        total_career = len([r for r in career_rows
+                            if (r.get("name") or "").strip()])
+        done_ats = total_ats - len(remaining_ats)
+        done_career = total_career - len(remaining_career)
+        # Companies added to the seeds after the run stopped.
+        try:
+            planned = int(run[3] or 0) + int(run[4] or 0)
+            added = max(0, (total_ats + total_career) - planned)
+        except (TypeError, ValueError):
+            added = 0
+        return {
+            "run_id": run_id,
+            "method": run[1] or "full",
+            "remaining_ats": remaining_ats,
+            "remaining_career": remaining_career,
+            "done_ats": max(0, done_ats),
+            "done_career": max(0, done_career),
+            "total_ats": total_ats,
+            "total_career": total_career,
+            "added_since_stop": added,
+        }
+    return None
+
+
 def record_scan_event(db_path, run_id: str, level: str = "info",
                       phase: str = "pipeline", message: str = "",
                       company: str = ""):

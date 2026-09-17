@@ -95,14 +95,19 @@ Your personal application tracker. Select any saved job to set its status
 
 ### 4. Tools
 The control centre:
-- **Scanner** — a single **Scan Now** button: scans every seeded company
-  (ATS boards through their official APIs *and* career pages through a
-  headless browser), then enriches each job from its own detail page so the
-  verdicts are as accurate as possible. Live output appears in the log
+- **Scanner** — **Scan Now** starts the full campaign; **Stop (keep progress)**
+  stops it at any time with everything found so far already saved; **Resume**
+  continues exactly the remaining companies (even after restarting the app),
+  with the progress bar picking up where it stopped. A progress bar under the
+  buttons shows live progress (`ATS 12/46`, `Career 88/162`) and reaches 100%
+  when the scan finishes; the full per-company output appears in the log
   window. There is no mode to choose — see
   [One Scan Mode](#one-scan-mode-always-the-complete-one).
 - **Scan History** — every past scan run; select one to view or download a
-  detailed per-company log including errors.
+  detailed per-company log including errors. Stopped scans show `cancelled`;
+  once a resume finishes everything left, the stopped row becomes `resumed`
+  (with a `↩ <child run>` link) and the continuing row shows
+  `<status> ↩ resumed from <parent run>`.
 - **Data Quality** — remove duplicate jobs/companies, clear expired jobs, or
   wipe all scanned data.
 - **Freshness Check** — re-verifies saved jobs against their live pages and
@@ -160,7 +165,9 @@ the complete campaign, because a partial scan would silently hide jobs.
 4. Every job is classified (Blue Card / relocation / remote) and
    deduplicated.
 5. Results are stored in the local SQLite database and appear immediately in
-   the Dashboard and Search tabs.
+   the Dashboard and Search tabs. The progress bar counts one step per
+   finished company (ATS phase first, then career pages), so it always ends
+   at 100% — `EMPTY` companies (no open roles right now) count as done too.
 
 Seed files live in your user data folder and can be edited in the Data
 Management tab.
@@ -205,8 +212,11 @@ in the scan log.
 That is the detail-page pass, and it is bounded by design. SponsorScout sizes
 its own worker/browser pool from your CPU and RAM (a single browser on a 2-core
 / 8 GB machine), runs at below-normal process priority, and disables images,
-GPU and background networking while crawling. The Dashboard stays usable and
-**Stop** cancels immediately.
+GPU and background networking while crawling. The Dashboard stays usable.
+**You don't have to sit through it:** press **Stop (keep progress)** any time
+— everything found so far is already saved — and press **Resume** later to
+continue exactly the remaining companies. Stopping closes all browsers, so
+other apps run smoothly again; resuming works even after restarting the app.
 
 **A job shows `?` for Sponsor / Blue Card / Relocation.**
 `?` means *unknown*, never *no*. The listing did not contain explicit evidence
@@ -372,15 +382,21 @@ aggiungere note.
 
 ### 4. Strumenti (Tools)
 Il centro di controllo:
-- **Scanner** — un unico pulsante **Scansiona Ora**: scansiona ogni azienda
-  nell'elenco (bacheche ATS tramite le loro API ufficiali *e* pagine carriera
-  tramite un browser headless), poi arricchisce ogni lavoro dalla sua pagina di
-  dettaglio, così i verdetti sono il più accurati possibile. L'output live
-  appare nella finestra di log. Non c'è alcuna modalità da scegliere — vedi
+- **Scanner** — **Scansiona Ora** avvia la campagna completa; **Ferma
+  (mantieni progresso)** la interrompe in qualsiasi momento mantenendo tutto
+  ciò che è stato trovato; **Riprendi** continua esattamente le aziende
+  restanti (anche dopo aver riavviato l'app), con la barra di avanzamento che
+  riparte da dove si era fermata. Una barra di avanzamento sotto i pulsanti
+  mostra il progresso live (`ATS 12/46`, `Carriere 88/162`) e arriva al 100%
+  a scansione finita; l'output completo per azienda appare nella finestra di
+  log. Non c'è alcuna modalità da scegliere — vedi
   [Una Sola Modalità di Scansione](#una-sola-modalità-di-scansione-sempre-quella-completa).
 - **Cronologia Scansioni** — ogni scansione passata; selezionane una per
   visualizzare o scaricare un registro dettagliato per azienda, errori
-  inclusi.
+  inclusi. Le scansioni interrotte mostrano `cancelled`; quando una ripresa
+  completa tutto ciò che restava, la riga interrotta diventa `resumed`
+  (con un link `↩ <run figlio>`) e la riga che continua mostra
+  `<stato> ↩ resumed from <run genitore>`.
 - **Qualità Dati** — rimuovi lavori/aziende duplicati, cancella lavori scaduti
   o elimina tutti i dati scansionati.
 - **Verifica Aggiornamento** — riverifica i lavori salvati sulle loro
@@ -444,7 +460,10 @@ nasconderebbe dei lavori senza alcun avviso.
 4. Ogni lavoro viene classificato (Carta Blu / trasferimento / remoto) e
    deduplicato.
 5. I risultati vengono salvati nel database SQLite locale e appaiono
-   immediatamente nelle schede Pannello e Cerca.
+   immediatamente nelle schede Pannello e Cerca. La barra di avanzamento
+   conta un passo per azienda finita (prima la fase ATS, poi le pagine
+   carriera), quindi arriva sempre al 100% — anche le aziende `EMPTY`
+   (nessuna posizione aperta al momento) contano come completate.
 
 I file seed si trovano nella cartella dati dell'utente e possono essere
 modificati nella scheda Gestione Dati.
@@ -491,7 +510,11 @@ ogni esito è registrato nel log della scansione.
 dimensiona i propri worker/browser in base a CPU e RAM (un solo browser su un PC
 con 2 core / 8 GB), gira con priorità di processo inferiore al normale e
 disattiva immagini, GPU e rete in background durante l'esplorazione. Il
-Pannello resta utilizzabile e **Stop** annulla immediatamente.
+Pannello resta utilizzabile. **Non devi aspettare tutto il tempo:** premi
+**Ferma (mantieni progresso)** quando vuoi — tutto ciò che è stato trovato è
+già salvato — e premi **Riprendi** più tardi per continuare esattamente le
+aziende restanti. Fermando si chiudono tutti i browser, così le altre app
+tornano fluide; la ripresa funziona anche dopo aver riavviato l'app.
 
 **Un lavoro mostra `?` per Sponsor / Carta Blu / Trasferimento.**
 `?` significa *sconosciuto*, mai *no*. L'annuncio non conteneva un'evidenza

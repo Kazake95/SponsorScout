@@ -11,7 +11,8 @@ from PySide6.QtCore import QStandardPaths, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
+    QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
+    QProgressBar, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -226,6 +227,7 @@ class ToolsTab(QWidget):
         self.db_path = db_path
         self.coordinator = ScanCoordinator(db_path=db_path)
         self.coordinator.progress.connect(self._on_scan_progress)
+        self.coordinator.progress_tick.connect(self._on_scan_progress_tick)
         self.coordinator.finished.connect(self._on_scan_finished)
         self._freshness_done.connect(self._on_freshness_done)
 
@@ -242,6 +244,12 @@ class ToolsTab(QWidget):
         # ── Freshness check group ────────────────────────────────────────────
         root.addWidget(self._build_freshness_group())
         root.addStretch(1)
+        # Resume availability depends on stopped runs in the DB — refresh
+        # the button once the tab exists (safe if the DB is unreachable).
+        try:
+            self._refresh_resume_button()
+        except Exception:
+            pass
 
 # ── Group builders ───────────────────────────────────────────────────────
     @staticmethod
@@ -272,14 +280,38 @@ class ToolsTab(QWidget):
               "enrich each job from its detail page, so no listing misses "
               "its evidence."))
         self.scan_btn.clicked.connect(self.start_scan)
-        self.stop_btn = QPushButton(_("Stop"))
+        self.resume_btn = QPushButton(_("Resume"))
+        self.resume_btn.setEnabled(False)
+        self.resume_btn.setToolTip(
+            _("Continue the last stopped scan — only companies it did not "
+              "finish are scanned, so no progress is lost."))
+        self.resume_btn.clicked.connect(self.resume_scan)
+        self.stop_btn = QPushButton(_("Stop (keep progress)"))
         self.stop_btn.setEnabled(False)
+        self.stop_btn.setToolTip(
+            _("Stop the scan now and keep everything found so far. "
+              "Press Resume later to continue the remaining companies — "
+              "all browsers close, so other apps run smoothly again."))
         self.stop_btn.clicked.connect(self.coordinator.stop)
         self.scan_status = QLabel(_("Idle"))
-        for w in (self.scan_btn, self.stop_btn, self.scan_status):
+        for w in (self.scan_btn, self.resume_btn, self.stop_btn,
+                  self.scan_status):
             row.addWidget(w)
         row.addStretch(1)
         lay.addLayout(row)
+        # ── Visual scan progress (cheap: one setValue per company tick) ──
+        prow = QHBoxLayout()
+        prow.setSpacing(8)
+        self.scan_bar = QProgressBar()
+        self.scan_bar.setRange(0, 1000)
+        self.scan_bar.setValue(0)
+        self.scan_bar.setTextVisible(True)
+        self.scan_bar.setFormat("%p%")
+        self.scan_phase = QLabel("")
+        self.scan_phase.setMinimumWidth(220)
+        prow.addWidget(self.scan_bar, stretch=1)
+        prow.addWidget(self.scan_phase)
+        lay.addLayout(prow)
         self.scan_log = QPlainTextEdit()
         self.scan_log.setReadOnly(True)
         self.scan_log.setMaximumHeight(180)
@@ -369,13 +401,121 @@ class ToolsTab(QWidget):
         # data for every job.
         self.scan_log.clear()
         self.scan_status.setText(_("Running…"))
+        self.scan_bar.setValue(0)
+        self.scan_phase.setText(_("Starting scan…"))
         self.scan_btn.setEnabled(False)
+        self.resume_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.status_message.emit(_("Scan started"))
         self.coordinator.start(SCAN_METHOD)
 
-    def _on_scan_progress(self, line: str):
-        self.scan_log.appendPlainText(line)
+    def resume_scan(self):
+        """Continue the newest stopped run (Stop-as-checkpoint).
+
+        Only companies the stopped run did not finish are scanned; the
+        progress bar restores to the checkpoint (e.g. 54%) and continues.
+        Safe across app restarts — the checkpoint lives in the DB.
+        """
+        if self.coordinator.is_running():
+            QMessageBox.information(self, _("SponsorScout"),
+                                    _("A scan is already running."))
+            return
+        try:
+            checkpoint = db.get_resumable_scan(self.db_path)
+        except Exception as exc:
+            QMessageBox.critical(self, _("SponsorScout"),
+                                 _("Could not find a scan to resume:\n{error}")
+                                 .format(error=str(exc)))
+            return
+        if not checkpoint:
+            QMessageBox.information(self, _("SponsorScout"),
+                                    _("Nothing to resume — no stopped scan "
+                                      "with unfinished companies."))
+            self._refresh_resume_button()
+            return
+        remaining = (len(checkpoint["remaining_ats"])
+                     + len(checkpoint["remaining_career"]))
+        total = checkpoint["total_ats"] + checkpoint["total_career"]
+        done = total - remaining
+        self.scan_log.clear()
+        self.scan_log.appendPlainText(
+            _("Resuming {run} — {done}/{total} companies already done, "
+              "{remaining} remaining.").format(
+                run=checkpoint["run_id"], done=done, total=total,
+                remaining=remaining))
+        if checkpoint.get("added_since_stop"):
+            self.scan_log.appendPlainText(
+                _("(+{n} companies added to seeds since the stop — "
+                  "they are included.)").format(
+                    n=checkpoint["added_since_stop"]))
+        self.scan_status.setText(_("Running…"))
+        try:
+            self.scan_bar.setValue(int(done * 1000 / total) if total else 0)
+        except Exception:
+            self.scan_bar.setValue(0)
+        self.scan_phase.setText(
+            _("Resuming — {done}/{total} done.").format(done=done,
+                                                        total=total))
+        self.scan_btn.setEnabled(False)
+        self.resume_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.status_message.emit(_("Resuming scan"))
+        self.coordinator.start(SCAN_METHOD,
+                               resume_from=checkpoint["run_id"])
+
+    def _refresh_resume_button(self):
+        """Enable Resume only when a stopped run has unfinished companies."""
+        if self.coordinator.is_running():
+            return
+        try:
+            checkpoint = db.get_resumable_scan(self.db_path)
+        except Exception:
+            checkpoint = None
+        self.resume_btn.setEnabled(bool(checkpoint))
+        if checkpoint:
+            remaining = (len(checkpoint["remaining_ats"])
+                         + len(checkpoint["remaining_career"]))
+            total = checkpoint["total_ats"] + checkpoint["total_career"]
+            done = total - remaining
+            self.resume_btn.setToolTip(
+                _("Resume {run} — {done}/{total} done, {remaining} "
+                  "remaining.").format(run=checkpoint["run_id"], done=done,
+                                        total=total, remaining=remaining))
+        else:
+            self.resume_btn.setToolTip(
+                _("Continue the last stopped scan — only companies it did "
+                  "not finish are scanned, so no progress is lost."))
+
+    def _on_scan_progress(self, chunk: str):
+        from sponsorscout.application.scan_coordinator import PROGRESS_PREFIX
+        visible = [ln for ln in str(chunk).splitlines()
+                   if not ln.strip().startswith(PROGRESS_PREFIX)]
+        if visible:
+            self.scan_log.appendPlainText("\n".join(visible))
+
+    def _on_scan_progress_tick(self, done: int, total: int,
+                               phase: str, label: str):
+        # Visual only: one integer setValue + one short label per company.
+        # Guards keep stale/edge ticks (subset scans, zero totals) sane.
+        try:
+            if total <= 0:
+                return
+            done = max(0, min(int(done), int(total)))
+            self.scan_bar.setValue(int(done * 1000 / total))
+            # The tick label already carries phase name + phase-local count
+            # ("ATS 1/46" / "Career 4/162"); prepending the overall count too
+            # produced the duplicated "ATS 1/208 — ATS 1/46" text.  The bar
+            # itself shows overall %, so render just the label.
+            if label:
+                self.scan_phase.setText(str(label))
+            elif phase == "ats":
+                self.scan_phase.setText(_("ATS"))
+            elif phase == "career":
+                self.scan_phase.setText(_("Career"))
+            else:
+                self.scan_phase.setText(str(phase or _("Scan")))
+        except Exception:
+            pass
 
     def _on_scan_finished(self, summary: dict):
         self.scan_btn.setEnabled(True)
@@ -390,7 +530,17 @@ class ToolsTab(QWidget):
             f"--- {status}: ingested={summary.get('ingested', 0)}, "
             f"duplicates={summary.get('duplicates', 0)}, "
             f"quarantined={summary.get('quarantined', 0)} ---")
+        try:
+            if summary.get("cancelled"):
+                self.scan_phase.setText(
+                    _("Cancelled — partial progress shown."))
+            elif status in ("completed", "partial"):
+                self.scan_bar.setValue(self.scan_bar.maximum())
+                self.scan_phase.setText(_("Finished."))
+        except Exception:
+            pass
         self.refresh()
+        self._refresh_resume_button()
         self.data_changed.emit()
         self.scan_finished.emit(summary)
         self.status_message.emit(_("Scan finished: ") + status)
@@ -458,11 +608,32 @@ class ToolsTab(QWidget):
              n_err, jobs, quarantined, dups, _ats, _career) = r[:14]
             row_idx = self.runs_table.rowCount()
             self.runs_table.insertRow(row_idx)
-            values = (run_id, method, (started or "")[:19], status,
+            # Resume chain: child rows carry "resumed_from:<parent>" and
+            # promoted parents carry "resumed_by:<child>" in the error/notes
+            # field — surface it so pause/resume is visible in history.
+            try:
+                _err_text = str(_err or "")
+                _parent = db.parse_resume_link(_err_text)
+                _child = db.parse_resumed_by(_err_text)
+                if status == "resumed" and _child:
+                    status_text = (
+                        f"{_('resumed')} ↩ {_child}")
+                elif _parent:
+                    status_text = (
+                        f"{status} ↩ {_('resumed from')} {_parent}")
+                else:
+                    status_text = str(status)
+            except Exception:
+                status_text = str(status)
+            values = (run_id, method, (started or "")[:19], status_text,
                       jobs, dups, quarantined, n_err)
             for col, val in enumerate(values):
                 self.runs_table.setItem(
                     row_idx, col, QTableWidgetItem(str(val if val is not None else "")))
+        try:
+            self._refresh_resume_button()
+        except Exception:
+            pass
 
     # ── Data-quality actions (ported from the original Tools tab) ───────────
     def _review_quarantine(self):
