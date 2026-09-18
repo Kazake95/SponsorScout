@@ -693,12 +693,21 @@ class _LiveIngester(threading.Thread):
 
 # ── Orchestration ────────────────────────────────────────────────────────────
 
+def _normalize_names(names) -> list[str]:
+    """Trim a company-name list; empty / whitespace names are dropped."""
+    return [c.strip() for c in (names or []) if c and c.strip()]
+
+
 def run_scan(method: str = "full",
              db_path=None,
              cancel_event: threading.Event | None = None,
              only_companies: list | None = None,
              progress: ProgressFn | None = None,
-             resume_from: str | None = None) -> dict:
+             resume_from: str | None = None,
+             only_ats: list | None = None,
+             only_career: list | None = None,
+             run_ats: bool = True,
+             run_career: bool = True) -> dict:
     """Run a full scan campaign and ingest the results.
 
     method:
@@ -709,7 +718,14 @@ def run_scan(method: str = "full",
                     (dev CLI only; leaves some verdicts as ``Unknown``).
 
     only_companies: optional list of company names — when given, only those
-      seed targets are scanned (CLI --company).
+      seed targets are scanned in BOTH phases (CLI --company).
+
+    only_ats / only_career: optional per-phase whitelists (custom scan).
+      ``only_ats`` filters the ATS phase, ``only_career`` the career phase.
+      ``run_ats`` / ``run_career`` toggle each phase on/off independently.
+      All default to the historical behaviour (both phases, all companies).
+      ``only_companies`` fans out to both phases when the per-phase lists
+      are not given.
 
     resume_from: optional run_id of a stopped run.  Companies already
       finished in that run (per its ``scan_log`` rows) are skipped — the
@@ -772,22 +788,44 @@ def run_scan(method: str = "full",
     # Resume (Stop-as-checkpoint): companies finished in the stopped run
     # are excluded before scanning starts — the scanners never revisit
     # them, and their rows are already in jobs via live ingestion.
-    skip_names: set[str] = set()
+    skip_ats: set[str] = set()
+    skip_career: set[str] = set()
     if resume_from:
         try:
             _done = db.get_completed_scan_companies(db_path, resume_from)
-            skip_names = set(_done.get("ats", set())) | set(
-                _done.get("career", set()))
+            skip_ats = set(_done.get("ats", set()))
+            skip_career = set(_done.get("career", set()))
         except Exception:
             logger.exception("Could not load resume checkpoint %s", resume_from)
-            skip_names = set()
+            skip_ats = set()
+            skip_career = set()
+    skip_names = skip_ats | skip_career
     seed_note = ""
     total_added = added.get("ats", 0) + added.get("career", 0)
     if total_added:
         seed_note = f" (seed update: +{total_added} new companies)"
-    wanted: set[str] | None = None
-    if only_companies:
-        wanted = {c.strip().lower() for c in only_companies if c and c.strip()}
+
+    # ── Custom scan scope ────────────────────────────────────────────────────
+    # Per-phase whitelists and phase toggles.  ``None`` = no filter (full
+    # phase); an empty set means "phase disabled / nothing selected" — the
+    # phase is skipped with a progress note, never an error.
+    ats_sel = _normalize_names(only_ats)
+    career_sel = _normalize_names(only_career)
+    shared_sel = _normalize_names(only_companies)
+    wanted_ats: set[str] | None = None
+    wanted_career: set[str] | None = None
+    if not run_ats:
+        wanted_ats = set()
+    elif ats_sel or shared_sel:
+        wanted_ats = {c.lower() for c in (ats_sel or shared_sel)}
+    if not run_career:
+        wanted_career = set()
+    elif career_sel or shared_sel:
+        wanted_career = {c.lower() for c in (career_sel or shared_sel)}
+    run_method = ("custom"
+                  if (only_ats is not None or only_career is not None
+                      or not run_ats or not run_career) else method)
+    summary["method"] = run_method
 
     def _remaining(path, names: set[str] | None, skip: set[str]) -> int:
         count = 0
@@ -803,11 +841,12 @@ def run_scan(method: str = "full",
             count += 1
         return count
 
-    if skip_names or wanted is not None:
-        # Remaining-to-scan after resume-skip and/or subset filter.
-        n_ats = _remaining(seed_manager.user_ats_path(), wanted, skip_names)
-        n_career = _remaining(seed_manager.user_career_path(), wanted,
-                              skip_names)
+    if skip_names or wanted_ats is not None or wanted_career is not None:
+        # Remaining-to-scan after resume-skip and/or per-phase subset filter.
+        n_ats = _remaining(seed_manager.user_ats_path(), wanted_ats,
+                           skip_ats)
+        n_career = _remaining(seed_manager.user_career_path(), wanted_career,
+                              skip_career)
     # Structured PROGRESS: lines for the UI progress bar (one tick per
     # finished company).  Wrapped outside the event tee so ticks land in
     # the run timeline too.  base_* offsets resume runs so the bar
@@ -822,7 +861,7 @@ def run_scan(method: str = "full",
         base_ats=max(0, full_ats - n_ats) if skip_names else 0,
         base_career=max(0, full_career - n_career)
         if skip_names else 0).wrap(progress)
-    db.start_scan_run(db_path, run_id, method, n_ats, n_career)
+    db.start_scan_run(db_path, run_id, run_method, n_ats, n_career)
 
     # Live ingestion: scanners write accepted rows to their CSVs company by
     # company, so tail them into the DB while the scan runs. This makes the
@@ -845,7 +884,8 @@ def run_scan(method: str = "full",
     # Resume: the scanners each accept an only_companies whitelist, so
     # feed them exactly the remaining companies.  ``None`` means "scan
     # everything" — pass the computed remaining lists only when resuming.
-    resume_only: list[str] | None = None
+    resume_only_ats: list[str] | None = None
+    resume_only_career: list[str] | None = None
     if skip_names:
         try:
             ats_names = [
@@ -856,44 +896,61 @@ def run_scan(method: str = "full",
                 (r.get("name") or "").strip()
                 for r in seed_manager.read_seed_rows(
                     seed_manager.user_career_path())["rows"]]
-            if wanted is not None:
-                ats_names = [n for n in ats_names if n.lower() in wanted]
+            if wanted_ats is not None:
+                ats_names = [n for n in ats_names if n.lower() in wanted_ats]
+            if wanted_career is not None:
                 career_names = [n for n in career_names
-                                if n.lower() in wanted]
-            resume_only = [n for n in (ats_names + career_names)
-                           if n and n.lower() not in skip_names]
-            if not resume_only:
-                resume_only = []
+                                if n.lower() in wanted_career]
+            resume_only_ats = [n for n in ats_names
+                               if n and n.lower() not in skip_ats]
+            resume_only_career = [n for n in career_names
+                                  if n and n.lower() not in skip_career]
         except Exception:
             logger.exception("Could not compute resume company list")
-            resume_only = None
-    # Effective whitelist for the scanners: explicit subset, resume
-    # remainder, or their intersection when both are given.
-    if resume_only is not None:
-        if wanted is not None:
-            _resume_set = {n.lower() for n in resume_only}
-            scan_only = [c for c in (only_companies or [])
-                         if c and c.strip().lower() in _resume_set]
+            resume_only_ats = None
+            resume_only_career = None
+    # Effective whitelist per phase: explicit subset, resume remainder, or
+    # their intersection when both are given.
+    if resume_only_ats is not None or resume_only_career is not None:
+        if wanted_ats is not None:
+            _rset = {n.lower() for n in (resume_only_ats or [])}
+            scan_only_ats = [c for c in (ats_sel or shared_sel)
+                             if c and c.strip().lower() in _rset]
         else:
-            scan_only = list(resume_only)
+            scan_only_ats = list(resume_only_ats or [])
+        if wanted_career is not None:
+            _rset = {n.lower() for n in (resume_only_career or [])}
+            scan_only_career = [c for c in (career_sel or shared_sel)
+                                if c and c.strip().lower() in _rset]
+        else:
+            scan_only_career = list(resume_only_career or [])
     else:
-        scan_only = list(only_companies) if only_companies else None
-    if resume_from and skip_names and (scan_only is None or scan_only):
+        scan_only_ats = (list(ats_sel) if ats_sel
+                         else (list(shared_sel) if shared_sel else None))
+        scan_only_career = (list(career_sel) if career_sel
+                            else (list(shared_sel) if shared_sel else None))
+    if resume_from and skip_names and (scan_only_ats or scan_only_career
+                                       or (scan_only_ats is None
+                                           and scan_only_career is None)):
         _skipped = len(skip_names)
         _note = (f" (resuming {resume_from}: skipping "
                  f"{_skipped} finished companies)")
         seed_note = f"{seed_note}{_note}" if seed_note else _note
-    progress(f"Scan {run_id} started: method={method}, "
+    progress(f"Scan {run_id} started: method={run_method}, "
              f"ATS companies={n_ats}, career companies={n_career}{seed_note}")
 
     # 1 ─ ATS scan (API-first, fast) ------------------------------------------
-    if n_ats > 0:
+    if wanted_ats is not None and not wanted_ats and not run_ats:
+        progress("ATS phase disabled — skipping ATS scan")
+    elif wanted_ats is not None and not n_ats:
+        progress("No ATS companies selected — skipping ATS phase")
+    elif n_ats > 0:
         try:
             scanner = ats_module.ATSScanner(
                 seed_file=str(seed_manager.user_ats_path()),
                 output_file=str(ats_out),
                 cancel_event=cancel_event,
-                only_companies=scan_only,
+                only_companies=scan_only_ats,
             )
             scanner.run_id = run_id
             ats_module.progress_cb = progress
@@ -909,7 +966,11 @@ def run_scan(method: str = "full",
         progress("No ATS seed rows — skipping ATS phase")
 
     # 2 ─ Career crawl (browser-heavy) ----------------------------------------
-    if n_career == 0:
+    if wanted_career is not None and not run_career:
+        progress("Career phase disabled — skipping career crawl")
+    elif wanted_career is not None and not n_career:
+        progress("No career companies selected — skipping career phase")
+    elif n_career == 0:
         progress("No career seed rows — skipping career phase")
     elif cancel_event.is_set() and ats_csv is None:
         # Cancelled during ATS with nothing produced: honour the stop fully.
@@ -938,7 +999,7 @@ def run_scan(method: str = "full",
                 output_csv=str(career_out),
                 detail_scan=detail,
                 cancel_event=cancel_event,
-                only_companies=scan_only,
+                only_companies=scan_only_career,
                 # Host-adaptive: the scanner sizes its own browser pool from
                 # CPU/RAM when this is None (2-core / 8 GB machines must not
                 # run several Chromium instances at once).

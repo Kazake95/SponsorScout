@@ -10,13 +10,15 @@ import threading
 from PySide6.QtCore import QStandardPaths, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMessageBox, QPlainTextEdit, QPushButton,
     QProgressBar, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from sponsorscout import paths
+from sponsorscout.application import seed_manager
 from sponsorscout.application.scan_coordinator import ScanCoordinator
 from sponsorscout.core.dedup import dedup_companies_in_db, dedup_jobs_in_db
 from sponsorscout.db import database as db
@@ -213,6 +215,155 @@ class QuarantineDialog(QDialog):
             _("{n} row(s) promoted into jobs.").format(n=promoted))
 
 
+class _CompanyPicker(QWidget):
+    """One phase's company picker: enable checkbox + filterable checklist."""
+
+    selection_changed = Signal()
+
+    def __init__(self, title, enabled_label, path, parent=None):
+        super().__init__(parent)
+        self.seed_path = path
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.enabled_cb = QCheckBox(enabled_label)
+        self.enabled_cb.setChecked(True)
+        self.enabled_cb.toggled.connect(self._on_toggle)
+        lay.addWidget(self.enabled_cb)
+        self.list = QListWidget()
+        self.list.setAlternatingRowColors(True)
+        self.list.setSelectionMode(QAbstractItemView.NoSelection)
+        lay.addWidget(self.list, stretch=1)
+        brow = QHBoxLayout()
+        self.filter = QLineEdit()
+        self.filter.setPlaceholderText(_("Filter companies…"))
+        self.filter.textChanged.connect(self._apply_filter)
+        brow.addWidget(self.filter, stretch=1)
+        self.all_btn = QPushButton(_("Select all"))
+        self.all_btn.clicked.connect(lambda: self._set_all(True))
+        brow.addWidget(self.all_btn)
+        self.none_btn = QPushButton(_("Clear"))
+        self.none_btn.clicked.connect(lambda: self._set_all(False))
+        brow.addWidget(self.none_btn)
+        lay.addLayout(brow)
+        self.count_lbl = QLabel("")
+        lay.addWidget(self.count_lbl)
+        self.reload()
+        self.enabled_cb.toggled.connect(self.selection_changed)
+        self.list.itemChanged.connect(lambda _i: self.selection_changed.emit())
+
+    def _on_toggle(self, on: bool):
+        self.list.setEnabled(on)
+        self.all_btn.setEnabled(on)
+        self.none_btn.setEnabled(on)
+        self.filter.setEnabled(on)
+
+    def reload(self):
+        try:
+            rows = seed_manager.read_seed_rows(self.seed_path)["rows"]
+        except Exception:
+            rows = []
+        self.list.blockSignals(True)
+        self.list.clear()
+        for r in rows:
+            name = (r.get("name") or "").strip()
+            if not name:
+                continue
+            industry = (r.get("industry") or "").strip()
+            label = f"{name}  ({industry})" if industry else name
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self.list.addItem(item)
+        self.list.blockSignals(False)
+        self.selection_changed.emit()
+
+    def _apply_filter(self, text):
+        low = (text or "").lower()
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            item.setHidden(bool(low) and low not in item.text().lower())
+
+    def _set_all(self, checked: bool):
+        state = Qt.Checked if checked else Qt.Unchecked
+        self.list.blockSignals(True)
+        for i in range(self.list.count()):
+            if not self.list.item(i).isHidden():
+                self.list.item(i).setCheckState(state)
+        self.list.blockSignals(False)
+        self.selection_changed.emit()
+
+    def is_enabled(self) -> bool:
+        return self.enabled_cb.isChecked()
+
+    def selected_names(self) -> list:
+        return [self.list.item(i).data(Qt.UserRole)
+                for i in range(self.list.count())
+                if self.list.item(i).checkState() == Qt.Checked]
+
+    def total_count(self) -> int:
+        return self.list.count()
+
+
+class CustomScanDialog(QDialog):
+    """Pick which companies / source types a custom scan covers."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(_("Custom Scan"))
+        self.resize(640, 560)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel(_(
+            "Choose the source types and companies to scan. Selected "
+            "companies are scanned exactly like in a full scan — the full "
+            "scan simply covers every seeded company.")))
+        self.ats_picker = _CompanyPicker(
+            _("ATS portals"), _("Scan ATS portals (API-based, fast)"),
+            seed_manager.user_ats_path())
+        self.career_picker = _CompanyPicker(
+            _("Career portals"), _("Scan career portals (crawled, slower)"),
+            seed_manager.user_career_path())
+        lay.addWidget(self.ats_picker, stretch=1)
+        lay.addWidget(self.career_picker, stretch=1)
+        self.summary_lbl = QLabel("")
+        lay.addWidget(self.summary_lbl)
+        brow = QHBoxLayout()
+        self.start_btn = QPushButton(_("Start Custom Scan"))
+        self.start_btn.setObjectName("Primary")
+        self.start_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton(_("Cancel"))
+        self.cancel_btn.clicked.connect(self.reject)
+        brow.addStretch(1)
+        brow.addWidget(self.cancel_btn)
+        brow.addWidget(self.start_btn)
+        lay.addLayout(brow)
+        self.ats_picker.selection_changed.connect(self._refresh_summary)
+        self.career_picker.selection_changed.connect(self._refresh_summary)
+        self._refresh_summary()
+
+    def _refresh_summary(self):
+        n_ats = len(self.ats_picker.selected_names())
+        n_career = len(self.career_picker.selected_names())
+        parts = []
+        if self.ats_picker.is_enabled():
+            parts.append(_("ATS: {n}/{total}").format(
+                n=n_ats, total=self.ats_picker.total_count()))
+        if self.career_picker.is_enabled():
+            parts.append(_("Career: {n}/{total}").format(
+                n=n_career, total=self.career_picker.total_count()))
+        self.summary_lbl.setText(_("Selected: {parts}").format(
+            parts="  ·  ".join(parts) if parts else "—"))
+        self.start_btn.setEnabled(bool(parts))
+
+    def scope(self) -> dict:
+        return {
+            "run_ats": self.ats_picker.is_enabled(),
+            "run_career": self.career_picker.is_enabled(),
+            "ats": self.ats_picker.selected_names(),
+            "career": self.career_picker.selected_names(),
+        }
+
+
 class ToolsTab(QWidget):
     """Scanner control + data-quality tools (mirrors the original Tools tab)."""
 
@@ -280,6 +431,11 @@ class ToolsTab(QWidget):
               "enrich each job from its detail page, so no listing misses "
               "its evidence."))
         self.scan_btn.clicked.connect(self.start_scan)
+        self.custom_btn = QPushButton(_("Custom Scan"))
+        self.custom_btn.setToolTip(
+            _("Choose specific companies and/or source types (ATS and/or "
+              "career portals) to scan instead of every seeded company."))
+        self.custom_btn.clicked.connect(self.start_custom_scan)
         self.resume_btn = QPushButton(_("Resume"))
         self.resume_btn.setEnabled(False)
         self.resume_btn.setToolTip(
@@ -294,8 +450,8 @@ class ToolsTab(QWidget):
               "all browsers close, so other apps run smoothly again."))
         self.stop_btn.clicked.connect(self.coordinator.stop)
         self.scan_status = QLabel(_("Idle"))
-        for w in (self.scan_btn, self.resume_btn, self.stop_btn,
-                  self.scan_status):
+        for w in (self.scan_btn, self.custom_btn, self.resume_btn,
+                  self.stop_btn, self.scan_status):
             row.addWidget(w)
         row.addStretch(1)
         lay.addLayout(row)
@@ -409,6 +565,40 @@ class ToolsTab(QWidget):
         self.status_message.emit(_("Scan started"))
         self.coordinator.start(SCAN_METHOD)
 
+    def start_custom_scan(self):
+        """Open the picker dialog and start a scoped scan with it."""
+        if self.coordinator.is_running():
+            QMessageBox.information(self, _("SponsorScout"),
+                                    _("A scan is already running."))
+            return
+        try:
+            dlg = CustomScanDialog(self)
+            if dlg.exec() != QDialog.Accepted:
+                return
+            scope = dlg.scope()
+        except Exception:
+            QMessageBox.critical(self, _("SponsorScout"),
+                                 _("Could not open the custom scan dialog."))
+            return
+        if not (scope.get("run_ats") or scope.get("run_career")):
+            QMessageBox.information(self, _("SponsorScout"),
+                                    _("Select at least one source type."))
+            return
+        if not (scope.get("ats") or scope.get("career")):
+            QMessageBox.information(self, _("SponsorScout"),
+                                    _("Select at least one company."))
+            return
+        self.scan_log.clear()
+        self.scan_status.setText(_("Running…"))
+        self.scan_bar.setValue(0)
+        self.scan_phase.setText(_("Starting custom scan…"))
+        self.scan_btn.setEnabled(False)
+        self.custom_btn.setEnabled(False)
+        self.resume_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.status_message.emit(_("Custom scan started"))
+        self.coordinator.start(SCAN_METHOD, scan_scope=scope)
+
     def resume_scan(self):
         """Continue the newest stopped run (Stop-as-checkpoint).
 
@@ -519,6 +709,7 @@ class ToolsTab(QWidget):
 
     def _on_scan_finished(self, summary: dict):
         self.scan_btn.setEnabled(True)
+        self.custom_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         status = summary.get("status", "error")
         if summary.get("cancelled"):
@@ -800,6 +991,10 @@ class ToolsTab(QWidget):
                     help_lbl.setText(txt)
                     box.setToolTip(txt)
         self.scan_btn.setText(_("Scan Now"))
+        self.custom_btn.setText(_("Custom Scan"))
+        self.custom_btn.setToolTip(
+            _("Choose specific companies and/or source types (ATS and/or "
+              "career portals) to scan instead of every seeded company."))
         self.scan_btn.setToolTip(
             _("Scan every seeded company (ATS boards + career pages) and "
               "enrich each job from its detail page, so no listing misses "

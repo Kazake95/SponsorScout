@@ -46,7 +46,8 @@ class ScanCoordinator(QObject):
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, method: str = "full", resume_from: str | None = None) -> bool:
+    def start(self, method: str = "full", resume_from: str | None = None,
+              scan_scope: dict | None = None) -> bool:
         """Start a scan campaign. False if a scan is already running.
 
         The app uses a single scan mode (``"full"``): ATS boards + career
@@ -57,6 +58,11 @@ class ScanCoordinator(QObject):
         ``resume_from``: run_id of a stopped run — only its unfinished
         companies are scanned (Stop-as-checkpoint); the progress bar is
         offset so it continues from the checkpoint.
+
+        ``scan_scope``: optional custom-scan scope dict with optional keys
+        ``run_ats`` (bool), ``run_career`` (bool), ``ats`` (list of ATS
+        company names), ``career`` (list of career company names).
+        ``None`` means a full scan of every seeded company.
         """
         if self.is_running():
             return False
@@ -92,12 +98,18 @@ class ScanCoordinator(QObject):
                     flush_progress()
 
             try:
+                scope = scan_scope if isinstance(scan_scope, dict) else None
                 summary = pipeline.run_scan(
                     method=method,
                     db_path=self.db_path,
                     cancel_event=self._cancel,
                     progress=on_progress,
                     resume_from=resume_from,
+                    only_ats=scope.get("ats") if scope else None,
+                    only_career=scope.get("career") if scope else None,
+                    run_ats=bool(scope.get("run_ats", True)) if scope else True,
+                    run_career=bool(scope.get("run_career", True))
+                    if scope else True,
                 )
             except Exception as exc:  # defensive: never kill the thread silently
                 summary = {

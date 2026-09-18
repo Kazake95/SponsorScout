@@ -15,7 +15,7 @@
 - [Quick Start](#-quick-start)
 - [The Five Tabs](#-the-five-tabs)
 - [Language Switching](#-language-switching)
-- [One Scan Mode — Always the Complete One](#-one-scan-mode--always-the-complete-one)
+- [Scan Modes — Full & Custom](#-scan-modes--full--custom)
 - [How Scanning Works](#-how-scanning-works)
 - [Where Your Data Lives](#-where-your-data-lives)
 - [Troubleshooting & FAQ](#-troubleshooting--faq)
@@ -95,14 +95,15 @@ Your personal application tracker. Select any saved job to set its status
 
 ### 4. Tools
 The control centre:
-- **Scanner** — **Scan Now** starts the full campaign; **Stop (keep progress)**
+- **Scanner** — **Scan Now** starts the full campaign; **Custom Scan** lets
+  you pick specific companies and/or source types (ATS boards and/or career
+  pages) instead of every seeded company; **Stop (keep progress)**
   stops it at any time with everything found so far already saved; **Resume**
   continues exactly the remaining companies (even after restarting the app),
   with the progress bar picking up where it stopped. A progress bar under the
   buttons shows live progress (`ATS 12/46`, `Career 88/162`) and reaches 100%
   when the scan finishes; the full per-company output appears in the log
-  window. There is no mode to choose — see
-  [One Scan Mode](#-one-scan-mode--always-the-complete-one).
+  window. See [Scan Modes](#-scan-modes--full--custom).
 - **Scan History** — every past scan run; select one to view or download a
   detailed per-company log including errors. Stopped scans show `cancelled`;
   once a resume finishes everything left, the stopped row becomes `resumed`
@@ -130,10 +131,14 @@ next launch.
 
 ---
 
-## 🔍 One Scan Mode — Always the Complete One
+## 🔍 Scan Modes — Full & Custom
 
-SponsorScout has a **single scan mode**: pressing **Scan Now** always runs
-the complete campaign, because a partial scan would silently hide jobs.
+### Full scan (the default)
+
+Pressing **Scan Now** (or the Dashboard's **Rescan Companies**) always runs
+the complete campaign across every seeded company, because a partial scan
+would silently hide jobs you have not asked for. This is the recommended way
+to scan.
 
 ### What a scan does
 - **ATS boards (API)** — every seeded company with a known ATS (Ashby,
@@ -147,10 +152,37 @@ the complete campaign, because a partial scan would silently hide jobs.
   and EU Blue Card evidence. Nothing is guessed: a verdict is only upgraded
   when the page provides explicit evidence.
 
-> **Why only one mode?** The old **Quick** option never found *more* or
+> **Why is Full the default?** The old **Quick** option never found *more* or
 > *fewer* jobs — it only skipped the detail-page pass, leaving more verdicts
 > shown as `?` and some locations blank. For a sponsorship search that is
-> the wrong trade-off, so the app no longer asks you to choose.
+> the wrong trade-off, so the scan itself always extracts full detail.
+
+### Custom scan (targeted)
+
+**Tools → Custom Scan** opens a picker where you choose exactly what to scan:
+
+- **Source types** — tick *ATS portals* (API-based, fast) and/or *Career
+  portals* (crawled with a headless browser, slower). Unticking one simply
+  skips that phase.
+- **Companies** — each picker lists every company from your seed files (with
+  its industry) as a checkbox. Use the filter box to find companies quickly,
+  or *Select all* / *Clear* to bulk-toggle.
+- A live summary shows how many companies are selected per phase, so you can
+  see the scope before starting.
+
+Custom scans run the **same thorough pipeline** as a full scan — the only
+difference is *which* targets are scanned, so results are identical in
+quality while the run takes time proportional to the selection (e.g. a
+10-company career-only scan takes minutes instead of an hour). Use cases:
+
+- re-scan just the companies you added or edited in **Data Management**;
+- refresh a handful of interesting companies without waiting a full hour;
+- test a new seed row before committing to a full campaign.
+
+Custom runs are labelled `custom` in **Scan History**. **Stop (keep
+progress)** and **Resume** work the same way as for a full scan: Resume
+continues only the remaining *selected* companies. Your company selection is
+not saved between runs — **Scan Now** always covers everything.
 
 ---
 
